@@ -1,5 +1,6 @@
 import time
 import json
+import uuid
 from pathlib import Path
 
 from selenium import webdriver
@@ -16,6 +17,35 @@ from bs4 import BeautifulSoup
 URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
 OUTPUT_DIR = Path("output_constituicao")
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+STATUS_VIGENTE        = "VIGENTE"
+STATUS_REVOGADO       = "REVOGADO"
+STATUS_SUSPENSO       = "SUSPENSO"
+STATUS_REDACAO_ANTIGA = "REDACAO_ANTIGA"
+
+TIPO_INCLUSAO  = "INCLUSAO"
+TIPO_ALTERACAO = "ALTERACAO"
+TIPO_REVOGACAO = "REVOGACAO"
+TIPO_ADICAO    = "ADICAO"
+
+TIPO_REF_LEI       = "LEI"
+TIPO_REF_DECRETO   = "DECRETO"
+TIPO_REF_RESOLUCAO = "RESOLUCAO"
+TIPO_REF_OUTRO     = "OUTRO"
+
+
+def gerar_id():
+    return str(uuid.uuid4())
+
+def make_modificacoes_historicas (
+        tipo: str = TIPO_INCLUSAO,
+        descricao: str = "",
+        texto_antigo: str = "",
+
+):
+
+
+
 
 
 def criar_driver (headless: bool = False) -> webdriver.Crhome:
@@ -38,6 +68,7 @@ def criar_driver (headless: bool = False) -> webdriver.Crhome:
 
 
 def carregar_pagina(driver: webdriver.Chrome, url: str) -> str:
+    print(f"Acessando: {url}")
     driver.get(url)
     try:
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
@@ -46,11 +77,6 @@ def carregar_pagina(driver: webdriver.Chrome, url: str) -> str:
     time.sleep(2)
     print(f"Página carregada: {driver.title}")
     return driver.page_source
-
-
-def parsear_conteudo(html: str) -> dict:
-    soup = BeautifulSoup(html, "lxml")  
-
 
 
 def salvar_json(dados: dict, caminho: Path) -> none:
@@ -63,7 +89,7 @@ def main():
     driver = criar_driver(headless=True)
     try:
         html = carregar_pagina(driver, URL)
-        dados = parsear_conteudo(html)
+        # dados = parsear_conteudo(html)
         salvar_json(dados, OUTPUT_DIR / "constituicao.json")
         print(f"Concluído! Arquivo em: {OUTPUT_DIR.resolve()}")
     finally:
