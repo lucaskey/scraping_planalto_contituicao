@@ -153,7 +153,7 @@ def make_capitulo(
     return{
         "id_dispositivo_legislativo": gerar_id(),
         "capitulo": capitulo,
-        "descricao_do_capitulo": descricao,
+        "descricao_do_capitulo": descricao.upper(),
         "artigos": [],
     }
 
@@ -169,13 +169,36 @@ def make_secao(
         "id_dispositivo_legislativo": "...",
         "secao": "...",
         "descricao_da_secao": "...",
+        "subsecoes": [...],
         "artigos": [...]
     }
     """
     return{
         "id_dispositivo_legislativo": gerar_id(),
         "secao": secao,
-        "descricao_da_secao": descricao,
+        "descricao_da_secao": descricao.upper(),
+        "subsecoes": [],
+        "artigos": [],
+    }
+
+# SUBSEÇÃO
+def make_subsecao(
+    subsecao: str = "",
+    descricao: str = "",
+) -> Dict[str, Any]:
+    """
+    Schema:
+    {
+        "id_dispositivo_legislativo": "...",
+        "subsecao": "...",
+        "descricao_da_subsecao": "...",
+        "artigos": [...]
+    }
+    """
+    return{
+        "id_dispositivo_legislativo": gerar_id(),
+        "subsecao": subsecao,
+        "descricao_da_subsecao": descricao.upper(),
         "artigos": [],
     }
 
@@ -305,6 +328,9 @@ def detectar_capitulo(t: str) -> bool:
 def detectar_secao(t: str) -> bool:    
     return bool(re.match(r'^SE[CÇ][AÃ]O\s+[IVXLCDM]+', t.strip().upper()))  
 
+def detectar_subsecao(t: str) -> bool:    
+    return bool(re.match(r'^SUBSE[CÇ][AÃ]O\s+[IVXLCDM]+', t.strip().upper())) 
+
 def detectar_artigo(t: str) -> bool:    
     return bool(re.match(r'^Art\.\s*\d+', t.strip(), re.IGNORECASE))
 
@@ -354,7 +380,7 @@ def carregar_pagina(driver: webdriver.Chrome, url: str) -> str:
     try:
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
     except TimeoutException:
-        print("Timeout ao aguarrdar o carregamento da página.")
+        print("Timeout ao aguardar o carregamento da página.")
     time.sleep(2)
     print(f"Página carregada: {driver.title}")
     return driver.page_source
@@ -367,6 +393,7 @@ class EstadoParser:
         self.titulo_dict:   Optional[Dict] = None
         self.capitulo_dict: Optional[Dict] = None
         self.secao_dict:   Optional[Dict] = None
+        self.subsecao_dict: Optional[Dict] = None
         self.artigo_dict:   Optional[Dict] = None
         self.paragrafo_dict: Optional[Dict] = None
         self.inciso_dict:   Optional[Dict] = None
@@ -386,7 +413,7 @@ class EstadoParser:
         return t
 
 
-    # CapítulO
+    # Capítulo
     def abrir_capitulo(self, capitulo: Dict):
         self.fechar_capitulo()
         self.capitulo_dict = capitulo
@@ -405,6 +432,19 @@ class EstadoParser:
         self.capitulo_dict = secao
 
     def fechar_secao(self):
+        self.fechar_artigo()
+        if self.capitulo_dict is not None and self.titulo_dict is not None:
+            self.capitulo_dict.pop("_direto", None)
+            self.titulo_dict["capitulos"].append(self.capitulo_dict)
+        self.capitulo_dict = None
+
+    
+    # Subseção
+    def abrir_subsecao(self, subsecao: Dict):
+        self.fechar_subsecao()
+        self.capitulo_dict = subsecao
+
+    def fechar_subsecao(self):
         self.fechar_artigo()
         if self.capitulo_dict is not None and self.titulo_dict is not None:
             self.capitulo_dict.pop("_direto", None)
@@ -492,6 +532,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
     aguardando_desc_titulo = False
     aguardando_desc_capitulo = False
     aguardando_desc_secao = False
+    aguardando_desc_subsecao = False
 
 
     for elem in elementos:
@@ -519,14 +560,20 @@ def parsear_constituicao(html: str) -> List[Dict]:
         if aguardando_desc_capitulo:
             aguardando_desc_capitulo = False
             if estado.capitulo_dict is not None:
-                estado.capitulo_dict["descricao_do_capitulo"] = texto
+                estado.capitulo_dict["descricao_do_capitulo"] = texto.upper()
             continue
 
         if aguardando_desc_secao:
             aguardando_desc_secao = False
             if estado.capitulo_dict is not None:
-                estado.capitulo_dict["descricao_secao"] = texto
+                estado.capitulo_dict["descricao_da_secao"] = texto.upper()
             continue    
+
+        if aguardando_desc_subsecao:
+            aguardando_desc_subsecao = False
+            if estado.capitulo_dict is not None:
+                estado.capitulo_dict["descricao_da_subsecao"] = texto.upper()
+            continue
 
         # TÍTULO
         if detectar_titulo(texto):
@@ -561,6 +608,16 @@ def parsear_constituicao(html: str) -> List[Dict]:
             if not desc.strip():
                  aguardando_desc_secao = True
             print(f"      [SEC]  {num} — {desc[:48]}")
+            continue
+
+        # SUBSEÇÃO
+        if detectar_subsecao(texto):
+            coletando_preambulo = False
+            num, desc = split_num_nome(texto, r'^(SUBSE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)')
+            estado.abrir_subsecao(make_subsecao(subsecao=num, descricao=desc))
+            if not desc.strip():
+                 aguardando_desc_subsecao = True
+            print(f"        [SUBSEC]  {num} — {desc[:45]}")
             continue
 
         # ARTIGO
@@ -644,9 +701,9 @@ def main():
         print("\n[+] Parsing estruturado...")
         dados = parsear_constituicao(html)
 
-        salvar_json(dados, OUTPUT_DIR / "constituicao_schema.json")
+        salvar_json(dados, OUTPUT_DIR / "constituicao_schema7.json")
 
-        print(f"\n Arquivo: {(OUTPUT_DIR / 'constituicao_schema.json').resolve()}")
+        print(f"\n Arquivo: {(OUTPUT_DIR / 'constituicao_schema7.json').resolve()}")
 
     finally:
         driver.quit()
