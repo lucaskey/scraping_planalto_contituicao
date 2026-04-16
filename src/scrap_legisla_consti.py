@@ -3,6 +3,7 @@ Hierarquia de dados para a Legislação - Constituição:
 Título
     └── Capítulo
         └── Seção
+            ├── Subseção
             └── Artigo
                 ├── referenciais legislativos
                 ├── modificações históricas            
@@ -130,7 +131,7 @@ def make_titulo(
     return{
         "id_dispositivo_legislativo": gerar_id(),
         "titulo": titulo,
-        "descricao_do_titulo": descricao,
+        "descricao_do_titulo": descricao.upper(),
         "capitulos": [],
     }
 
@@ -145,14 +146,14 @@ def make_capitulo(
     {
         "id_dispositivo_legislativo": "...",
         "capitulo": "...",
-        "descricao_titulo": "...",
+        "descricao_do_capitulo": "...",
         "artigos": [...]
     }
     """
     return{
         "id_dispositivo_legislativo": gerar_id(),
         "capitulo": capitulo,
-        "descricao_capitulo": descricao,
+        "descricao_do_capitulo": descricao,
         "artigos": [],
     }
 
@@ -167,14 +168,14 @@ def make_secao(
     {
         "id_dispositivo_legislativo": "...",
         "secao": "...",
-        "descricao_secao": "...",
+        "descricao_da_secao": "...",
         "artigos": [...]
     }
     """
     return{
         "id_dispositivo_legislativo": gerar_id(),
         "secao": secao,
-        "descricao_secao": descricao,
+        "descricao_da_secao": descricao,
         "artigos": [],
     }
 
@@ -198,12 +199,13 @@ def make_artigo(
     }
     """
     return{
-        "id_dispositivo_leislativo": gerar_id(),
-        "numero_referencia": numero,
+        "id_dispositivo_legislativo": gerar_id(),
+        "numero_artigo": numero,
         "caput": caput,
         "status_do_artigo": status,
         "referenciais_legislativos": [],
         "modificacoes_historicas": [],
+        "incisos_caput": [],
         "paragrafos": [],
     }
 
@@ -229,8 +231,8 @@ def make_paragrafo(
     return{
         "id_dispositivo_legislativo": gerar_id(),
         "numero_paragrafo": numero,
-        "texto_paragrafo": texto,
-        "status_paragrafo": status,
+        "texto_do_paragrafo": texto,
+        "status_do_paragrafo": status,
         "referenciais_legislativos": [],
         "modificacoes_historicas": [],
         "incisos": [],
@@ -258,7 +260,7 @@ def make_inciso(
     return{
         "id_dispositivo_legislativo": gerar_id(),
         "numero_inciso": numero,
-        "texto_inciso": texto,
+        "texto_do_inciso": texto,
         "status_do_inciso": status,
         "referenciais_legislativos": [],
         "modificacoes_historicas": [],
@@ -306,8 +308,6 @@ def detectar_secao(t: str) -> bool:
 def detectar_artigo(t: str) -> bool:    
     return bool(re.match(r'^Art\.\s*\d+', t.strip(), re.IGNORECASE))
 
-# def detectar_paragrafo(t: str) -> bool:   
-#     return bool(re.match(r'^(§\s*\d+\s*[ºo]?\.?\s*|Parágrafo\s+único\.?)', t.strip(), re.IGNORECASE))
 def detectar_paragrafo(t: str) -> bool:
     return bool(re.match(r'^(§\s*\d+\s*[ºo]?\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', t.strip(),re.IGNORECASE))
 
@@ -317,11 +317,12 @@ def detectar_inciso(t: str) -> bool:
 def detectar_alinea(t: str) -> bool:    
     return bool(re.match(r'^[a-zA-Z]\)', t.strip()))  
 
-def split_num_nome(t: str, pattern: str) -> tuple:
+def split_num_nome(t: str, pattern: str) -> tuple[str, str]:
     match = re.match(pattern, t.strip(), re.IGNORECASE)
     if match:
-        num  = match.group(1).strip()
-        nome = t[len(num):].strip()
+        num = match.group(1).strip()
+        nome = t.strip()[len(match.group(0)):].strip()
+        nome = re.sub(r'^[-–:\s]+', '', nome)
         return num, nome
     return t.strip(), ""
 
@@ -362,7 +363,7 @@ def carregar_pagina(driver: webdriver.Chrome, url: str) -> str:
 # PARSER DE CONTEÚDO
 class EstadoParser:
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.titulo_dict:   Optional[Dict] = None
         self.capitulo_dict: Optional[Dict] = None
         self.secao_dict:   Optional[Dict] = None
@@ -393,7 +394,6 @@ class EstadoParser:
     def fechar_capitulo(self):
         self.fechar_artigo()
         if self.capitulo_dict is not None and self.titulo_dict is not None:
-            # Remove chave interna antes de salvar
             self.capitulo_dict.pop("_direto", None)
             self.titulo_dict["capitulos"].append(self.capitulo_dict)
         self.capitulo_dict = None
@@ -407,7 +407,6 @@ class EstadoParser:
     def fechar_secao(self):
         self.fechar_artigo()
         if self.capitulo_dict is not None and self.titulo_dict is not None:
-            # Remove chave interna antes de salvar
             self.capitulo_dict.pop("_direto", None)
             self.titulo_dict["capitulos"].append(self.capitulo_dict)
         self.capitulo_dict = None
@@ -460,25 +459,13 @@ class EstadoParser:
     def fechar_inciso(self):
         if self.inciso_dict is None:
             return
-        # Inciso vai para o parágrafo ativo; se não houver, vai ao artigo como
-        # parágrafo virtual de caput (parágrafo "0")
         if self.paragrafo_dict is not None:
             self.paragrafo_dict["incisos"].append(self.inciso_dict)
         elif self.artigo_dict is not None:
-            par_caput = self._garantir_paragrafo_caput()
-            par_caput["incisos"].append(self.inciso_dict)
+            if "incisos_caput" not in self.artigo_dict:
+                self.artigo_dict["incisos_caput"] = []
+            self.artigo_dict["incisos_caput"].append(self.inciso_dict)
         self.inciso_dict = None
-
-    def _garantir_paragrafo_caput(self) -> Dict:
-        """Retorna (ou cria) um parágrafo de caput para incisos sem parágrafo."""
-        if not self.artigo_dict:
-            return {}
-        pars = self.artigo_dict["paragrafos"]
-        if pars and pars[0]["numero_paragrafo"] == "caput":
-            return pars[0]
-        par = make_paragrafo(numero="caput", texto=self.artigo_dict["caput"])
-        pars.insert(0, par)
-        return par
 
 
 # PARSER PRINCIPAL
@@ -502,8 +489,14 @@ def parsear_constituicao(html: str) -> List[Dict]:
     estado = EstadoParser()
     coletando_preambulo = True
 
+    aguardando_desc_titulo = False
+    aguardando_desc_capitulo = False
+    aguardando_desc_secao = False
+
+
     for elem in elementos:
-        texto = elem.get_text(" ", strip=True)
+        texto = re.sub(r'[\n\r\t]+', ' ', elem.get_text(" ", strip=True)).strip()
+        texto = re.sub(r'\s{2,}', ' ', texto)
         if not texto or len(texto) < 2:
             continue
 
@@ -512,7 +505,28 @@ def parsear_constituicao(html: str) -> List[Dict]:
         # ── Marcador de preâmbulo
         if "PREÂMBULO" in texto_upper or "PREAMBULO" in texto_upper:
             coletando_preambulo = True
+            aguardando_desc_titulo = False
+            aguardando_desc_capitulo = False
+            aguardando_desc_secao = False
             continue
+
+        if aguardando_desc_titulo:
+            aguardando_desc_titulo = False
+            if estado.titulo_dict is not None:
+                estado.titulo_dict["descricao_do_titulo"] = texto.upper()
+            continue
+
+        if aguardando_desc_capitulo:
+            aguardando_desc_capitulo = False
+            if estado.capitulo_dict is not None:
+                estado.capitulo_dict["descricao_do_capitulo"] = texto
+            continue
+
+        if aguardando_desc_secao:
+            aguardando_desc_secao = False
+            if estado.capitulo_dict is not None:
+                estado.capitulo_dict["descricao_secao"] = texto
+            continue    
 
         # TÍTULO
         if detectar_titulo(texto):
@@ -522,8 +536,10 @@ def parsear_constituicao(html: str) -> List[Dict]:
                 titulos_resultado.append(titulo_fechado)
 
             num, desc = split_num_nome(texto, r'^(TÍTULO\s+[IVXLCDM]+)(.*)')
-            novo_titulo = make_titulo(titulo=num, descricao="")
+            novo_titulo = make_titulo(titulo=num, descricao=desc)
             estado.abrir_titulo(novo_titulo)
+            if not desc.strip():
+                aguardando_desc_titulo = True
             print(f"  [TÍTULO]   {num} — {desc[:55]}")
             continue
 
@@ -532,21 +548,25 @@ def parsear_constituicao(html: str) -> List[Dict]:
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(CAPÍTULO\s+[IVXLCDM]+)(.*)')
             estado.abrir_capitulo(make_capitulo(capitulo=num, descricao=desc))
+            if not desc.strip():
+                 aguardando_desc_capitulo = True
             print(f"    [CAP]    {num} — {desc[:50]}")
             continue
 
-        # SEÇÃO (tratada como capítulo filho)
+        # SEÇÃO
         if detectar_secao(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(SE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)')
             estado.abrir_secao(make_secao(secao=num, descricao=desc))
+            if not desc.strip():
+                 aguardando_desc_secao = True
             print(f"      [SEC]  {num} — {desc[:48]}")
             continue
 
         # ARTIGO
         if detectar_artigo(texto):
             coletando_preambulo = False
-            match  = re.match(r'^(Art\.\s*\d+[ºo°]?\.?\s*)', texto, re.IGNORECASE)
+            match = re.match(r'^(Art\.\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*)', texto, re.IGNORECASE)
             num_a  = match.group(1).strip() if match else texto[:25]
             caput  = texto[len(num_a):].strip() if match else texto
             estado.abrir_artigo(make_artigo(numero=num_a, caput=caput))
@@ -554,7 +574,9 @@ def parsear_constituicao(html: str) -> List[Dict]:
 
         # PARÁGRAFO 
         if detectar_paragrafo(texto) and estado.artigo_dict:
-            match  = re.match(r'^(§\s*\d+\s*?\.?[ºo]?\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', texto, re.IGNORECASE)
+            # match = re.match(r'^(§\s*\d+\s*?\.?[ºo]?\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', texto, re.IGNORECASE)
+            match = re.match(r'^(§\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', texto, re.IGNORECASE)
+
             num_p  = match.group(1).strip() if match else "§"
             corpo  = texto[len(num_p):].strip() if match else texto
             estado.abrir_paragrafo(make_paragrafo(numero=num_p, texto=corpo))
@@ -607,7 +629,7 @@ def salvar_json(dados: List[Dict], caminho: Path) -> None:
 def main():
     print("=" * 50)
     print("  Parser — Constituição Federal do Brasil")
-    print("  Output: formato estrutura_constituicao.json")
+    print("  Output: formato constituicao_schema.json")
     print("=" * 50)
 
     driver = criar_driver(headless=True)
@@ -624,7 +646,7 @@ def main():
 
         salvar_json(dados, OUTPUT_DIR / "constituicao_schema.json")
 
-        print(f"\n  ✅ Arquivo: {(OUTPUT_DIR / 'constituicao_schema.json').resolve()}")
+        print(f"\n Arquivo: {(OUTPUT_DIR / 'constituicao_schema.json').resolve()}")
 
     finally:
         driver.quit()
