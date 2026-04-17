@@ -114,7 +114,7 @@ def make_referencial_legislativo(
     }
 
 
-# TITULOS
+# TÍTULOS
 def make_titulo(
     titulo: str = "",
     descricao: str = "",
@@ -233,7 +233,7 @@ def make_artigo(
     }
 
 
-# PARAGRAFOS
+# PARÁGRAFOS
 def make_paragrafo(
     numero: str = "",
     texto: str = "",
@@ -338,7 +338,7 @@ def detectar_paragrafo(t: str) -> bool:
     return bool(re.match(r'^(§\s*\d+\s*[ºo]?\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', t.strip(),re.IGNORECASE))
 
 def detectar_inciso(t: str) -> bool:
-    return bool(re.match(r'^[IVXLCDM]{1,5}\s*[–\-]\s+', t.strip()))
+    return bool(re.match(r'^[IVXLCDM]+\s*[–\-]\s+', t.strip()))
 
 def detectar_alinea(t: str) -> bool:    
     return bool(re.match(r'^[a-zA-Z]\)', t.strip()))  
@@ -386,7 +386,7 @@ def carregar_pagina(driver: webdriver.Chrome, url: str) -> str:
     return driver.page_source
 
 
-# PARSER DE CONTEÚDO
+# PARSER DO CONTEÚDO
 class EstadoParser:
 
     def __init__(self) -> None:
@@ -543,7 +543,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
 
         texto_upper = texto.upper().strip()
 
-        # ── Marcador de preâmbulo
+        # Marcador de preâmbulo
         if "PREÂMBULO" in texto_upper or "PREAMBULO" in texto_upper:
             coletando_preambulo = True
             aguardando_desc_titulo = False
@@ -575,7 +575,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
                 estado.capitulo_dict["descricao_da_subsecao"] = texto.upper()
             continue
 
-        # TÍTULO
+        # Título
         if detectar_titulo(texto):
             coletando_preambulo = False
             titulo_fechado = estado.fechar_titulo()
@@ -590,7 +590,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             print(f"  [TÍTULO]   {num} — {desc[:55]}")
             continue
 
-        # CAPÍTULO
+        # Capítulo
         if detectar_capitulo(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(CAPÍTULO\s+[IVXLCDM]+)(.*)')
@@ -600,7 +600,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             print(f"    [CAP]    {num} — {desc[:50]}")
             continue
 
-        # SEÇÃO
+        # Seção
         if detectar_secao(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(SE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)')
@@ -610,7 +610,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             print(f"      [SEC]  {num} — {desc[:48]}")
             continue
 
-        # SUBSEÇÃO
+        # Subseção
         if detectar_subsecao(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(SUBSE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)')
@@ -620,7 +620,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             print(f"        [SUBSEC]  {num} — {desc[:45]}")
             continue
 
-        # ARTIGO
+        # Artigo
         if detectar_artigo(texto):
             coletando_preambulo = False
             match = re.match(r'^(Art\.\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*)', texto, re.IGNORECASE)
@@ -629,9 +629,8 @@ def parsear_constituicao(html: str) -> List[Dict]:
             estado.abrir_artigo(make_artigo(numero=num_a, caput=caput))
             continue
 
-        # PARÁGRAFO 
+        # Parágrafo
         if detectar_paragrafo(texto) and estado.artigo_dict:
-            # match = re.match(r'^(§\s*\d+\s*?\.?[ºo]?\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', texto, re.IGNORECASE)
             match = re.match(r'^(§\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', texto, re.IGNORECASE)
 
             num_p  = match.group(1).strip() if match else "§"
@@ -639,7 +638,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             estado.abrir_paragrafo(make_paragrafo(numero=num_p, texto=corpo))
             continue
 
-        # INCISO
+        # Inciso
         if detectar_inciso(texto) and estado.artigo_dict:
             partes = re.split(r'\s*[–\-]\s*', texto, maxsplit=1)
             num_i  = partes[0].strip()
@@ -647,7 +646,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             estado.abrir_inciso(make_inciso(numero=num_i, texto=corpo))
             continue
 
-        # ALÍNEA 
+        # Alínea 
         if detectar_alinea(texto) and estado.inciso_dict:
             match  = re.match(r'^([a-z]\))\s*', texto)
             num_al = match.group(1).strip() if match else "a)"
@@ -694,16 +693,16 @@ def main():
     try:
         html = carregar_pagina(driver, URL)
 
-        with open(OUTPUT_DIR / "constituicao_bruto.html", "w", encoding="utf-8") as f:
-            f.write(html)
-        print("[+] HTML bruto salvo.")
+        # with open(OUTPUT_DIR / "constituicao_bruto.html", "w", encoding="utf-8") as f:
+        #     f.write(html)
+        # print("[+] HTML bruto salvo.")
 
         print("\n[+] Parsing estruturado...")
         dados = parsear_constituicao(html)
 
-        salvar_json(dados, OUTPUT_DIR / "constituicao_schema7.json")
+        salvar_json(dados, OUTPUT_DIR / "constituicao_schema.json")
 
-        print(f"\n Arquivo: {(OUTPUT_DIR / 'constituicao_schema7.json').resolve()}")
+        print(f"\n Arquivo: {(OUTPUT_DIR / 'constituicao_schema.json').resolve()}")
 
     finally:
         driver.quit()
