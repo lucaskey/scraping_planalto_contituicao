@@ -147,6 +147,7 @@ def make_capitulo(
         "id_dispositivo_legislativo": "...",
         "capitulo": "...",
         "descricao_do_capitulo": "...",
+        "secoes": [...],
         "artigos": [...]
     }
     """
@@ -154,6 +155,7 @@ def make_capitulo(
         "id_dispositivo_legislativo": gerar_id(),
         "capitulo": capitulo,
         "descricao_do_capitulo": descricao.upper(),
+        "secoes": [],
         "artigos": [],
     }
 
@@ -354,7 +356,7 @@ def split_num_nome(t: str, pattern: str) -> tuple[str, str]:
 
 
 # CRIAR DRIVER
-def criar_driver (headless: bool = False) -> webdriver.Crhome:
+def criar_driver (headless: bool = False) -> webdriver.Chrome:
     options = Options()
     if headless:
         options.add_argument("--no-sandbox")
@@ -419,7 +421,7 @@ class EstadoParser:
         self.capitulo_dict = capitulo
 
     def fechar_capitulo(self):
-        self.fechar_artigo()
+        self.fechar_secao()
         if self.capitulo_dict is not None and self.titulo_dict is not None:
             self.capitulo_dict.pop("_direto", None)
             self.titulo_dict["capitulos"].append(self.capitulo_dict)
@@ -429,27 +431,27 @@ class EstadoParser:
     # Seção
     def abrir_secao(self, secao: Dict):
         self.fechar_secao()
-        self.capitulo_dict = secao
+        self.secao_dict = secao
 
     def fechar_secao(self):
-        self.fechar_artigo()
-        if self.capitulo_dict is not None and self.titulo_dict is not None:
-            self.capitulo_dict.pop("_direto", None)
-            self.titulo_dict["capitulos"].append(self.capitulo_dict)
-        self.capitulo_dict = None
+        self.fechar_subsecao()
+        if self.secao_dict is not None and self.capitulo_dict is not None:
+            self.secao_dict.pop("_direto", None)
+            self.capitulo_dict["secoes"].append(self.secao_dict)
+        self.secao_dict = None
 
     
     # Subseção
     def abrir_subsecao(self, subsecao: Dict):
         self.fechar_subsecao()
-        self.capitulo_dict = subsecao
+        self.subsecao_dict = subsecao
 
     def fechar_subsecao(self):
         self.fechar_artigo()
-        if self.capitulo_dict is not None and self.titulo_dict is not None:
-            self.capitulo_dict.pop("_direto", None)
-            self.titulo_dict["capitulos"].append(self.capitulo_dict)
-        self.capitulo_dict = None
+        if self.subsecao_dict is not None and self.secao_dict is not None:
+            self.subsecao_dict.pop("_direto", None)
+            self.secao_dict["subsecoes"].append(self.subsecao_dict)
+        self.subsecao_dict = None
 
 
     # Artigo 
@@ -461,7 +463,7 @@ class EstadoParser:
         self.fechar_paragrafo()
         if self.artigo_dict is None:
             return
-        destino = self.capitulo_dict or self._capitulo_direto()
+        destino = self.subsecao_dict or self.secao_dict or self.capitulo_dict or self._capitulo_direto()
         if destino is not None:
             destino["artigos"].append(self.artigo_dict)
         self.artigo_dict = None
@@ -565,14 +567,14 @@ def parsear_constituicao(html: str) -> List[Dict]:
 
         if aguardando_desc_secao:
             aguardando_desc_secao = False
-            if estado.capitulo_dict is not None:
-                estado.capitulo_dict["descricao_da_secao"] = texto.upper()
+            if estado.secao_dict is not None:
+                estado.secao_dict["descricao_da_secao"] = texto.upper()
             continue    
 
         if aguardando_desc_subsecao:
             aguardando_desc_subsecao = False
-            if estado.capitulo_dict is not None:
-                estado.capitulo_dict["descricao_da_subsecao"] = texto.upper()
+            if estado.subsecao_dict is not None:
+                estado.subsecao_dict["descricao_da_subsecao"] = texto.upper()
             continue
 
         # Título
@@ -587,7 +589,6 @@ def parsear_constituicao(html: str) -> List[Dict]:
             estado.abrir_titulo(novo_titulo)
             if not desc.strip():
                 aguardando_desc_titulo = True
-            print(f"  [TÍTULO]   {num} — {desc[:55]}")
             continue
 
         # Capítulo
@@ -597,7 +598,6 @@ def parsear_constituicao(html: str) -> List[Dict]:
             estado.abrir_capitulo(make_capitulo(capitulo=num, descricao=desc))
             if not desc.strip():
                  aguardando_desc_capitulo = True
-            print(f"    [CAP]    {num} — {desc[:50]}")
             continue
 
         # Seção
@@ -607,7 +607,6 @@ def parsear_constituicao(html: str) -> List[Dict]:
             estado.abrir_secao(make_secao(secao=num, descricao=desc))
             if not desc.strip():
                  aguardando_desc_secao = True
-            print(f"      [SEC]  {num} — {desc[:48]}")
             continue
 
         # Subseção
@@ -617,7 +616,6 @@ def parsear_constituicao(html: str) -> List[Dict]:
             estado.abrir_subsecao(make_subsecao(subsecao=num, descricao=desc))
             if not desc.strip():
                  aguardando_desc_subsecao = True
-            print(f"        [SUBSEC]  {num} — {desc[:45]}")
             continue
 
         # Artigo
@@ -632,7 +630,6 @@ def parsear_constituicao(html: str) -> List[Dict]:
         # Parágrafo
         if detectar_paragrafo(texto) and estado.artigo_dict:
             match = re.match(r'^(§\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', texto, re.IGNORECASE)
-
             num_p  = match.group(1).strip() if match else "§"
             corpo  = texto[len(num_p):].strip() if match else texto
             estado.abrir_paragrafo(make_paragrafo(numero=num_p, texto=corpo))
@@ -685,17 +682,13 @@ def salvar_json(dados: List[Dict], caminho: Path) -> None:
 def main():
     print("=" * 50)
     print("  Parser — Constituição Federal do Brasil")
-    print("  Output: formato constituicao_schema.json")
+    print("  Output: constituicao_schema.json")
     print("=" * 50)
 
     driver = criar_driver(headless=True)
 
     try:
         html = carregar_pagina(driver, URL)
-
-        # with open(OUTPUT_DIR / "constituicao_bruto.html", "w", encoding="utf-8") as f:
-        #     f.write(html)
-        # print("[+] HTML bruto salvo.")
 
         print("\n[+] Parsing estruturado...")
         dados = parsear_constituicao(html)
