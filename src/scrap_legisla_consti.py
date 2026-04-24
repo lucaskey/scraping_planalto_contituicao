@@ -36,9 +36,10 @@ from selenium.common.exceptions import TimeoutException
 from bs4 import BeautifulSoup
 
 
-URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
+BASE_URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
 OUTPUT_DIR = Path("output_constituicao")
 OUTPUT_DIR.mkdir(exist_ok=True)
+OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema.json"
 
 # STATUS DA MODIFICAÇÃO
 STATUS_VIGENTE        = "VIGENTE"
@@ -217,7 +218,7 @@ def make_artigo(
         "id_dispositivo_legislativo": "...",
         "numero_artigo": "...",
         "caput": "...",
-        "status_do_artigo": "VIGENTE | REVOGADO | SUSPENSO | REDACAO_ANTIGA",
+        "status_do_artigo": "VIGENTE | REVOGADO | REDACAO_ANTIGA",
         "referenciais_legislativos": [...],
         "modificacoes_historicas": [...],
         "paragrafos": [...]
@@ -247,7 +248,7 @@ def make_paragrafo(
         "id_dispositivo_legislativo": "...",
         "numero_paragrafo": "...",
         "texto_do_paragrafo": "...",
-        "status_do_paragrafo": "VIGENTE | REVOGADO | SUSPENSO | REDACAO_ANTIGA",
+        "status_do_paragrafo": "VIGENTE | REVOGADO | REDACAO_ANTIGA",
         "refereiais_legislativos": [...],
         "modificacoes_historicas": [...],
         "incisos": [...]
@@ -276,7 +277,7 @@ def make_inciso(
         "id_dispositivo_legislativo": "...",
         "numero_inciso": "...",
         "texto_do_inciso": "...",
-        "status_do_inciso": "VIGENTE | REVOGADO | SUSPENSO | REDACAO_ANTIGA",
+        "status_do_inciso": "VIGENTE | REVOGADO | REDACAO_ANTIGA",
         "refereiais_legislativos": [...],
         "modificacoes_historicas": [...],
         "alineas": [...]
@@ -305,7 +306,7 @@ def make_alinea(
         "id_dispositivo_legislativo": "...",
         "numero_alinea": "...",
         "texto_da_alinea": "...",
-        "status_da_alinea": "VIGENTE | REVOGADO | SUSPENSO | REDACAO_ANTIGA",
+        "status_da_alinea": "VIGENTE | REVOGADO | REDACAO_ANTIGA",
         "refereiais_legislativos": [...],
         "modificacoes_historicas": [...]
     }
@@ -353,6 +354,59 @@ def split_num_nome(t: str, pattern: str) -> tuple[str, str]:
         nome = re.sub(r'^[-–:\s]+', '', nome)
         return num, nome
     return t.strip(), ""
+
+
+def _texto_indica_revogacao(texto: str) -> bool:
+    t = (texto or "").strip().lower()
+
+    inicio = t[:80]
+
+    padroes = [
+        r'^\(?revogad[oa]\)?[\.;,\s]',          # "revogada;", "(revogada)"
+        r'^[a-z0-9]+\)\s*\(?revogad[oa]\)?',    # "a) (revogada)"
+        r'^\(?revogad[oa]\)?$',                 # só "(revogada)"
+    ]
+    return any(re.search(p, inicio) for p in padroes)
+
+
+def _elemento_em_risco(elem) -> bool:
+    """
+    Detecta se o texto está visualmente "riscado" no HTML (<strike>)
+    """
+    if elem is None:
+        return False
+
+    strike_tags = {"strike"}
+
+    try:
+        if elem.find(strike_tags):
+            return True
+    except Exception:
+        pass
+
+    try:
+        cadeia = [elem, *list(getattr(elem, "parents", []))]
+    except Exception:
+        cadeia = [elem]
+
+    for t in cadeia:
+        nome = getattr(t, "name", None)
+        if nome in strike_tags:
+            return True
+        style = (getattr(t, "attrs", {}) or {}).get("style", "") or ""
+        style_l = style.lower()
+        if "line-through" in style_l:
+            return True
+        if "text-decoration" in style_l and "through" in style_l:
+            return True
+
+    return False
+
+
+def detectar_status_dispositivo(texto: str, elem) -> str:
+    if _texto_indica_revogacao(texto) or _elemento_em_risco(elem):
+        return STATUS_REVOGADO
+    return STATUS_VIGENTE
 
 
 # CRIAR DRIVER
@@ -544,6 +598,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             continue
 
         texto_upper = texto.upper().strip()
+        status_dispositivo = detectar_status_dispositivo(texto, elem)
 
         # Marcador de preâmbulo
         if "PREÂMBULO" in texto_upper or "PREAMBULO" in texto_upper:
@@ -624,7 +679,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             match = re.match(r'^(Art\.\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*)', texto, re.IGNORECASE)
             num_a  = match.group(1).strip() if match else texto[:25]
             caput  = texto[len(num_a):].strip() if match else texto
-            estado.abrir_artigo(make_artigo(numero=num_a, caput=caput))
+            estado.abrir_artigo(make_artigo(numero=num_a, caput=caput, status=status_dispositivo))
             continue
 
         # Parágrafo
@@ -632,7 +687,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             match = re.match(r'^(§\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', texto, re.IGNORECASE)
             num_p  = match.group(1).strip() if match else "§"
             corpo  = texto[len(num_p):].strip() if match else texto
-            estado.abrir_paragrafo(make_paragrafo(numero=num_p, texto=corpo))
+            estado.abrir_paragrafo(make_paragrafo(numero=num_p, texto=corpo, status=status_dispositivo))
             continue
 
         # Inciso
@@ -640,7 +695,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             partes = re.split(r'\s*[–\-]\s*', texto, maxsplit=1)
             num_i  = partes[0].strip()
             corpo  = partes[1].strip() if len(partes) > 1 else ""
-            estado.abrir_inciso(make_inciso(numero=num_i, texto=corpo))
+            estado.abrir_inciso(make_inciso(numero=num_i, texto=corpo, status=status_dispositivo))
             continue
 
         # Alínea 
@@ -649,7 +704,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
             num_al = match.group(1).strip() if match else "a)"
             corpo  = texto[len(num_al):].strip() if match else texto
             estado.inciso_dict["alineas"].append(
-                make_alinea(numero=num_al, texto=corpo)
+                make_alinea(numero=num_al, texto=corpo, status=status_dispositivo)
             )
             continue
 
@@ -688,14 +743,14 @@ def main():
     driver = criar_driver(headless=True)
 
     try:
-        html = carregar_pagina(driver, URL)
+        html = carregar_pagina(driver, BASE_URL)
 
         print("\n[+] Parsing estruturado...")
         dados = parsear_constituicao(html)
 
-        salvar_json(dados, OUTPUT_DIR / "constituicao_schema.json")
+        salvar_json(dados, OUTPUT_JSON)
 
-        print(f"\n Arquivo: {(OUTPUT_DIR / 'constituicao_schema.json').resolve()}")
+        print(f"\n Arquivo: {OUTPUT_JSON.resolve()}")
 
     finally:
         driver.quit()
