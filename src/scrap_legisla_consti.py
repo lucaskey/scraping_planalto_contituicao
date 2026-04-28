@@ -56,7 +56,12 @@ TIPO_ADICAO    = "ADICAO"
 # TIPO DE REFERÊNCIA
 TIPO_REF_LEI       = "LEI"
 TIPO_REF_DECRETO   = "DECRETO"
-TIPO_REF_RESOLUCAO = "RESOLUCAO"
+TIPO_REF_DECRETO_LEI = "DECRETO-LEI"
+TIPO_REF_EMENDA    = "EMENDA"
+TIPO_REF_MPV       = "MPV"
+TIPO_REF_ADI       = "ADI"
+TIPO_REF_ADIN      = "ADIN"
+TIPO_REF_ADPF      = "ADPF"
 TIPO_REF_OUTRO     = "OUTRO"
 
 
@@ -78,7 +83,7 @@ def make_modificacoes_historicas (
         "tipo_de_modificacao": "INCLUSAO | ALTERACAO | REVOGACAO | ADICAO",
         "descricao_da_modificacao": "...",
         "texto_antigo_descontinuado": "...",
-        "status_da_modificacao": "VIGENTE | REVOGADO | SUSPENSO | REDACAO_ANTIGA"
+        "status_da_modificacao": "VIGENTE | REVOGADO"
     }
     """
     return {
@@ -101,9 +106,9 @@ def make_referencial_legislativo(
     {
         "id_referencia": "...",
         "numero_referencia": "...",
-        "tipo_de_referencia": "LEI | DECRETO | RESOLUCAO | OUTRO",
+        "tipo_de_referencia": "LEI | DECRETO | DECRETO-LEI | EMENDA | MPV | ADI | ADIN | ADPF | OUTRO",
         "texto_da_referencia": "...",
-        "status_da_modificacao": "VIGENTE | REVOGADO | SUSPENSO | REDACAO_ANTIGA"
+        "status_da_modificacao": "VIGENTE | REVOGADO"
     }
     """
     return {
@@ -218,7 +223,7 @@ def make_artigo(
         "id_dispositivo_legislativo": "...",
         "numero_artigo": "...",
         "caput": "...",
-        "status_do_artigo": "VIGENTE | REVOGADO | REDACAO_ANTIGA",
+        "status_do_artigo": "VIGENTE | REVOGADO",
         "referenciais_legislativos": [...],
         "modificacoes_historicas": [...],
         "paragrafos": [...]
@@ -248,7 +253,7 @@ def make_paragrafo(
         "id_dispositivo_legislativo": "...",
         "numero_paragrafo": "...",
         "texto_do_paragrafo": "...",
-        "status_do_paragrafo": "VIGENTE | REVOGADO | REDACAO_ANTIGA",
+        "status_do_paragrafo": "VIGENTE | REVOGADO ",
         "refereiais_legislativos": [...],
         "modificacoes_historicas": [...],
         "incisos": [...]
@@ -277,7 +282,7 @@ def make_inciso(
         "id_dispositivo_legislativo": "...",
         "numero_inciso": "...",
         "texto_do_inciso": "...",
-        "status_do_inciso": "VIGENTE | REVOGADO | REDACAO_ANTIGA",
+        "status_do_inciso": "VIGENTE | REVOGADO ",
         "refereiais_legislativos": [...],
         "modificacoes_historicas": [...],
         "alineas": [...]
@@ -407,6 +412,153 @@ def detectar_status_dispositivo(texto: str, elem) -> str:
     if _texto_indica_revogacao(texto) or _elemento_em_risco(elem):
         return STATUS_REVOGADO
     return STATUS_VIGENTE
+
+def _normalizar_numero_documento(numero: str) -> str:
+    n = re.sub(r"[^\d]", "", numero or "")
+    if not n:
+        return ""
+    if len(n) <= 3:
+        return n
+    return f"{n[:-3]}.{n[-3:]}"
+
+def _extrair_numero_referencia(texto: str, href: str) -> str:
+    """
+    Ex.: "Vide Lei nº 9.296, de 1996" -> "9.296"
+    Fallback: tenta inferir pelo path (ex.: ".../LEIS/L9296.htm" -> "9.296")
+    """
+    t = texto or ""
+
+    # STF: Mandado de Injunção (MI)
+    m = re.search(r"\bmi\s*(\d+)\b", t, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    # STF: ADI / ADIN / ADPF geralmente vêm como "(Vide ADIN 3392)" / "Vide ADPF 672"
+    m = re.search(
+        r"\b(adi|adin|adpf)\b(?:\s*n\s*[ºo°\.]?\s*)?\s*(\d[\d\.]*)\b",
+        t,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        return m.group(2).strip()
+
+    m = re.search(r"\bn[ºo°\.]?\s*([\d\.]+)", t, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    m = re.search(r"\b(?:lei|decreto|emenda|mpv)\s*n[ºo°\.]?\s*([\d\.]+)", t, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    h = (href or "").strip()
+    m = re.search(r"/L(\d+)\.htm", h, flags=re.IGNORECASE)
+    if m:
+        return _normalizar_numero_documento(m.group(1))
+
+    m = re.search(r"/(?:EC|ECONST|EMENDA)(\d+)\.htm", h, flags=re.IGNORECASE)
+    if m:
+        return m.group(1)
+
+    return ""
+
+def _tipo_de_referencia(texto: str, href: str) -> str:
+    h = (href or "").lower()
+    t = (texto or "").lower()
+
+    if "stf.jus.br" in h:
+        # STF: inferir pelo texto do link conforme escrito na Constituição.
+        # Não inferir "ADI" apenas pela URL, para evitar casos como "(Vide MI 7300)".
+        if "adpf" in t:
+            return TIPO_REF_ADPF
+        if "adin" in t:
+            return TIPO_REF_ADIN
+        if re.search(r"\badi\b", t):
+            return TIPO_REF_ADI
+        return TIPO_REF_OUTRO
+
+    # Planalto: o tipo aparece na URL (lei/decreto/decreto-lei/emendas/mpv)
+    if "decreto-lei" in h or "decretolei" in h:
+        return TIPO_REF_DECRETO_LEI
+    if "/decreto" in h or "decreto" in h:
+        return TIPO_REF_DECRETO
+    if "/mpv" in h or "mpv" in h:
+        return TIPO_REF_MPV
+    if "/emenda" in h or "emenda" in h:
+        return TIPO_REF_EMENDA
+    if "/leis/" in h or "/lei" in h or "lei" in h:
+        return TIPO_REF_LEI
+
+    return TIPO_REF_OUTRO
+
+def _status_da_referencia(a_tag) -> str:
+    """
+    - REVOGADO: se o texto do link começar com "revogado/revogada"
+      ou se houver texto imediatamente anterior (no mesmo parágrafo) riscado (<strike>/<s>/<del>).
+    - VIGENTE: caso contrário.
+    """
+    if a_tag is None:
+        return STATUS_VIGENTE
+
+    texto_link = a_tag.get_text(" ", strip=True) if hasattr(a_tag, "get_text") else ""
+    if re.match(r"^\s*revogad[oa]s?\b", texto_link or "", flags=re.IGNORECASE):
+        return STATUS_REVOGADO
+
+    # Checa se existe conteúdo riscado antes do link no mesmo bloco
+    try:
+        for prev in a_tag.previous_elements:
+            if prev is a_tag:
+                continue
+            # para quando sair do parágrafo/bloco atual
+            if getattr(prev, "name", None) in {"p", "h1", "h2", "h3", "h4", "h5"}:
+                break
+            if getattr(prev, "name", None) in {"strike", "s", "del"}:
+                return STATUS_REVOGADO
+            style = (getattr(prev, "attrs", {}) or {}).get("style", "") or ""
+            if "line-through" in style.lower():
+                return STATUS_REVOGADO
+    except Exception:
+        pass
+
+    return STATUS_VIGENTE
+
+def extrair_referenciais_legislativos(elem) -> List[Dict[str, Any]]:
+    if elem is None:
+        return []
+    refs: List[Dict[str, Any]] = []
+    try:
+        a_tags = elem.find_all("a", href=True)
+    except Exception:
+        return []
+
+    for a in a_tags:
+        href = (a.get("href") or "").strip()
+        texto_link = re.sub(r"\s{2,}", " ", a.get_text(" ", strip=True) or "").strip()
+        if not href or not texto_link:
+            continue
+
+        numero = _extrair_numero_referencia(texto_link, href)
+        tipo = _tipo_de_referencia(texto_link, href)
+        status = _status_da_referencia(a)
+
+        refs.append(
+            make_referencial_legislativo(
+                numero=numero,
+                tipo=tipo,
+                texto=texto_link,
+                status=status,
+            )
+        )
+
+    return refs
+
+def _normalizar_texto_para_json(texto: str) -> str:
+    """
+    Remove aspas do texto para evitar sequências \" no JSON gerado.
+    """
+    t = (texto or "")
+    t = t.replace('"', "")
+    t = t.replace("“", "").replace("”", "")
+    return t
 
 
 # CRIAR DRIVER
@@ -594,11 +746,13 @@ def parsear_constituicao(html: str) -> List[Dict]:
     for elem in elementos:
         texto = re.sub(r'[\n\r\t]+', ' ', elem.get_text(" ", strip=True)).strip()
         texto = re.sub(r'\s{2,}', ' ', texto)
+        texto = _normalizar_texto_para_json(texto)
         if not texto or len(texto) < 2:
             continue
 
         texto_upper = texto.upper().strip()
         status_dispositivo = detectar_status_dispositivo(texto, elem)
+        refs_no_elem = extrair_referenciais_legislativos(elem)
 
         # Marcador de preâmbulo
         if "PREÂMBULO" in texto_upper or "PREAMBULO" in texto_upper:
@@ -679,7 +833,10 @@ def parsear_constituicao(html: str) -> List[Dict]:
             match = re.match(r'^(Art\.\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*)', texto, re.IGNORECASE)
             num_a  = match.group(1).strip() if match else texto[:25]
             caput  = texto[len(num_a):].strip() if match else texto
-            estado.abrir_artigo(make_artigo(numero=num_a, caput=caput, status=status_dispositivo))
+            artigo = make_artigo(numero=num_a, caput=caput, status=status_dispositivo)
+            if refs_no_elem:
+                artigo["referenciais_legislativos"].extend(refs_no_elem)
+            estado.abrir_artigo(artigo)
             continue
 
         # Parágrafo
@@ -687,7 +844,10 @@ def parsear_constituicao(html: str) -> List[Dict]:
             match = re.match(r'^(§\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)', texto, re.IGNORECASE)
             num_p  = match.group(1).strip() if match else "§"
             corpo  = texto[len(num_p):].strip() if match else texto
-            estado.abrir_paragrafo(make_paragrafo(numero=num_p, texto=corpo, status=status_dispositivo))
+            par = make_paragrafo(numero=num_p, texto=corpo, status=status_dispositivo)
+            if refs_no_elem:
+                par["referenciais_legislativos"].extend(refs_no_elem)
+            estado.abrir_paragrafo(par)
             continue
 
         # Inciso
@@ -695,7 +855,10 @@ def parsear_constituicao(html: str) -> List[Dict]:
             partes = re.split(r'\s*[–\-]\s*', texto, maxsplit=1)
             num_i  = partes[0].strip()
             corpo  = partes[1].strip() if len(partes) > 1 else ""
-            estado.abrir_inciso(make_inciso(numero=num_i, texto=corpo, status=status_dispositivo))
+            inc = make_inciso(numero=num_i, texto=corpo, status=status_dispositivo)
+            if refs_no_elem:
+                inc["referenciais_legislativos"].extend(refs_no_elem)
+            estado.abrir_inciso(inc)
             continue
 
         # Alínea 
@@ -703,14 +866,24 @@ def parsear_constituicao(html: str) -> List[Dict]:
             match  = re.match(r'^([a-z]\))\s*', texto)
             num_al = match.group(1).strip() if match else "a)"
             corpo  = texto[len(num_al):].strip() if match else texto
+            ali = make_alinea(numero=num_al, texto=corpo, status=status_dispositivo)
+            if refs_no_elem:
+                ali["referenciais_legislativos"].extend(refs_no_elem)
             estado.inciso_dict["alineas"].append(
-                make_alinea(numero=num_al, texto=corpo, status=status_dispositivo)
+                ali
             )
             continue
 
         # Texto livre / preâmbulo → ignora
         if coletando_preambulo:
             continue
+
+        # Se o parágrafo não abriu um novo dispositivo, mas contém links,
+        # anexa os referenciais ao último dispositivo "aberto".
+        if refs_no_elem:
+            alvo = estado.inciso_dict or estado.paragrafo_dict or estado.artigo_dict
+            if alvo is not None:
+                alvo["referenciais_legislativos"].extend(refs_no_elem)
 
     # Fecha o último estado pendente
     titulo_final = estado.fechar_titulo()
