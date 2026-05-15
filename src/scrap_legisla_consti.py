@@ -44,14 +44,11 @@ OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema.json"
 # STATUS DA MODIFICAÇÃO
 STATUS_VIGENTE        = "VIGENTE"
 STATUS_REVOGADO       = "REVOGADO"
-STATUS_SUSPENSO       = "SUSPENSO"
-STATUS_REDACAO_ANTIGA = "REDACAO_ANTIGA"
 
 # TIPO DE MODIFICAÇÃO
 TIPO_INCLUSAO  = "INCLUSAO"
 TIPO_ALTERACAO = "ALTERACAO"
 TIPO_REVOGACAO = "REVOGACAO"
-TIPO_ADICAO    = "ADICAO"
 
 # TIPO DE REFERÊNCIA
 TIPO_REF_LEI       = "LEI"
@@ -80,7 +77,7 @@ def make_modificacoes_historicas (
     """
     Schema:
     {
-        "tipo_de_modificacao": "INCLUSAO | ALTERACAO | REVOGACAO | ADICAO",
+        "tipo_de_modificacao": "INCLUSAO | ALTERACAO | REVOGACAO",
         "descricao_da_modificacao": "...",
         "texto_antigo_descontinuado": "...",
         "status_da_modificacao": "VIGENTE | REVOGADO"
@@ -349,7 +346,7 @@ def detectar_inciso(t: str) -> bool:
     return bool(re.match(r'^[IVXLCDM]+\s*[–\-]\s+', t.strip()))
 
 def detectar_alinea(t: str) -> bool:    
-    return bool(re.match(r'^[a-zA-Z]\)', t.strip()))  
+    return bool(re.match(r'^\s*([a-z]\s*\))\s*', t.strip()))
 
 def split_num_nome(t: str, pattern: str) -> tuple[str, str]:
     match = re.match(pattern, t.strip(), re.IGNORECASE)
@@ -433,7 +430,7 @@ def _extrair_numero_referencia(texto: str, href: str) -> str:
     if m:
         return m.group(1).strip()
 
-    # STF: ADI / ADIN / ADPF geralmente vêm como "(Vide ADIN 3392)" / "Vide ADPF 672"
+    # STF: ADI / ADIN / ADPF
     m = re.search(
         r"\b(adi|adin|adpf)\b(?:\s*n\s*[ºo°\.]?\s*)?\s*(\d[\d\.]*)\b",
         t,
@@ -467,7 +464,6 @@ def _tipo_de_referencia(texto: str, href: str) -> str:
 
     if "stf.jus.br" in h:
         # STF: inferir pelo texto do link conforme escrito na Constituição.
-        # Não inferir "ADI" apenas pela URL, para evitar casos como "(Vide MI 7300)".
         if "adpf" in t:
             return TIPO_REF_ADPF
         if "adin" in t:
@@ -492,8 +488,7 @@ def _tipo_de_referencia(texto: str, href: str) -> str:
 
 def _status_da_referencia(a_tag) -> str:
     """
-    - REVOGADO: se o texto do link começar com "revogado/revogada"
-      ou se houver texto imediatamente anterior (no mesmo parágrafo) riscado (<strike>/<s>/<del>).
+    - REVOGADO: se o texto do link começar com "revogado/revogada" ou se houver texto riscado (<strike>/<s>/<del>).
     - VIGENTE: caso contrário.
     """
     if a_tag is None:
@@ -521,7 +516,14 @@ def _status_da_referencia(a_tag) -> str:
 
     return STATUS_VIGENTE
 
-def extrair_referenciais_legislativos(elem) -> List[Dict[str, Any]]:
+def _forcar_status_em_referencias(refs: List[Dict[str, Any]], status: Optional[str]) -> List[Dict[str, Any]]:
+    if not refs or not status:
+        return refs
+    for r in refs:
+        r["status_da_referencia"] = status
+    return refs
+
+def extrair_referenciais_legislativos(elem, status_dispositivo: Optional[str] = None) -> List[Dict[str, Any]]:
     if elem is None:
         return []
     refs: List[Dict[str, Any]] = []
@@ -539,6 +541,9 @@ def extrair_referenciais_legislativos(elem) -> List[Dict[str, Any]]:
         numero = _extrair_numero_referencia(texto_link, href)
         tipo = _tipo_de_referencia(texto_link, href)
         status = _status_da_referencia(a)
+        # Prioridade: se o dispositivo onde o link está inserido é REVOGADO, a referência deve refletir esse status.
+        if status_dispositivo == STATUS_REVOGADO:
+            status = STATUS_REVOGADO
 
         refs.append(
             make_referencial_legislativo(
@@ -549,7 +554,115 @@ def extrair_referenciais_legislativos(elem) -> List[Dict[str, Any]]:
             )
         )
 
-    return refs
+    return _forcar_status_em_referencias(refs, status_dispositivo)
+
+def _extrair_texto_riscado(elem) -> str:
+    """
+    Extrai texto "descontinuado" (riscado) no bloco atual:
+    - tags <strike>/<s>/<del>
+    - qualquer elemento com style contendo line-through
+    """
+    if elem is None:
+        return ""
+
+    partes: List[str] = []
+
+    try:
+        for t in elem.find_all(["strike", "s", "del"]):
+            tx = re.sub(r"\s{2,}", " ", t.get_text(" ", strip=True) or "").strip()
+            if tx:
+                partes.append(tx)
+    except Exception:
+        pass
+
+    try:
+        for t in elem.find_all(True):
+            style = (t.attrs or {}).get("style", "") or ""
+            if "line-through" not in style.lower():
+                continue
+            tx = re.sub(r"\s{2,}", " ", t.get_text(" ", strip=True) or "").strip()
+            if tx:
+                partes.append(tx)
+    except Exception:
+        pass
+
+    # remove duplicados preservando ordem
+    vistos = set()
+    unicos: List[str] = []
+    for p in partes:
+        if p in vistos:
+            continue
+        vistos.add(p)
+        unicos.append(p)
+
+    return " | ".join(unicos).strip()
+
+def _tipo_modificacao_por_texto(texto_link: str) -> Optional[str]:
+    """
+    - "Redação dada ..." => ALTERACAO
+    - começa com "Incluído ..." => INCLUSAO
+    - começa com "Revogado/Revogada ..." => REVOGACAO
+    Caso não encontre padrão, retorna None.
+    """
+    t = (texto_link or "").strip()
+    if not t:
+        return None
+
+    t_limpo = re.sub(r"^[\(\[\s]+|[\)\]\s]+$", "", t).strip()
+    t_low = t_limpo.lower()
+
+    if "redação dada" in t_low or "redacao dada" in t_low:
+        return TIPO_ALTERACAO
+
+    if re.match(r"^(inclu[ií]d[oa])\b", t_limpo, flags=re.IGNORECASE):
+        return TIPO_INCLUSAO
+
+    if re.match(r"^(revogad[oa])\b", t_limpo, flags=re.IGNORECASE):
+        return TIPO_REVOGACAO
+
+    return None
+
+def extrair_modificacoes_historicas(elem, status_dispositivo: Optional[str] = None) -> List[Dict[str, Any]]:
+    if elem is None:
+        return []
+
+    mods: List[Dict[str, Any]] = []
+    texto_antigo = _extrair_texto_riscado(elem)
+
+    try:
+        a_tags = elem.find_all("a")
+    except Exception:
+        return []
+
+    for a in a_tags:
+        texto_link = re.sub(r"\s{2,}", " ", a.get_text(" ", strip=True) or "").strip()
+        if not texto_link:
+            continue
+
+        status_ref = _status_da_referencia(a)
+        dispositivo_revogado = (status_dispositivo == STATUS_REVOGADO)
+
+        tipo = _tipo_modificacao_por_texto(texto_link)
+
+        # Prioridade: se o dispositivo ou a referência estiver revogado, a modificação deve ser REVOGACAO/REVOGADO, mesmo que o texto indique outro status.
+        if dispositivo_revogado or status_ref == STATUS_REVOGADO:
+            tipo = TIPO_REVOGACAO
+
+        if not tipo:
+            continue
+
+        status_mod = STATUS_REVOGADO if tipo == TIPO_REVOGACAO else STATUS_VIGENTE
+
+        mods.append(
+            make_modificacoes_historicas(
+                tipo=tipo,
+                descricao=texto_link,
+                texto_antigo=texto_antigo,
+                status=status_mod,
+            )
+        )
+
+    return mods
 
 def _normalizar_texto_para_json(texto: str) -> str:
     """
@@ -752,7 +865,8 @@ def parsear_constituicao(html: str) -> List[Dict]:
 
         texto_upper = texto.upper().strip()
         status_dispositivo = detectar_status_dispositivo(texto, elem)
-        refs_no_elem = extrair_referenciais_legislativos(elem)
+        refs_no_elem = extrair_referenciais_legislativos(elem, status_dispositivo=status_dispositivo)
+        mods_no_elem = extrair_modificacoes_historicas(elem, status_dispositivo=status_dispositivo)
 
         # Marcador de preâmbulo
         if "PREÂMBULO" in texto_upper or "PREAMBULO" in texto_upper:
@@ -836,6 +950,8 @@ def parsear_constituicao(html: str) -> List[Dict]:
             artigo = make_artigo(numero=num_a, caput=caput, status=status_dispositivo)
             if refs_no_elem:
                 artigo["referenciais_legislativos"].extend(refs_no_elem)
+            if mods_no_elem:
+                artigo["modificacoes_historicas"].extend(mods_no_elem)
             estado.abrir_artigo(artigo)
             continue
 
@@ -847,6 +963,8 @@ def parsear_constituicao(html: str) -> List[Dict]:
             par = make_paragrafo(numero=num_p, texto=corpo, status=status_dispositivo)
             if refs_no_elem:
                 par["referenciais_legislativos"].extend(refs_no_elem)
+            if mods_no_elem:
+                par["modificacoes_historicas"].extend(mods_no_elem)
             estado.abrir_paragrafo(par)
             continue
 
@@ -858,32 +976,55 @@ def parsear_constituicao(html: str) -> List[Dict]:
             inc = make_inciso(numero=num_i, texto=corpo, status=status_dispositivo)
             if refs_no_elem:
                 inc["referenciais_legislativos"].extend(refs_no_elem)
+            if mods_no_elem:
+                inc["modificacoes_historicas"].extend(mods_no_elem)
             estado.abrir_inciso(inc)
             continue
 
-        # Alínea 
+        # Alínea
         if detectar_alinea(texto) and estado.inciso_dict:
-            match  = re.match(r'^([a-z]\))\s*', texto)
-            num_al = match.group(1).strip() if match else "a)"
-            corpo  = texto[len(num_al):].strip() if match else texto
-            ali = make_alinea(numero=num_al, texto=corpo, status=status_dispositivo)
-            if refs_no_elem:
-                ali["referenciais_legislativos"].extend(refs_no_elem)
-            estado.inciso_dict["alineas"].append(
-                ali
-            )
-            continue
+            match  = re.match(r'^([a-z]\s*\))\s*', texto)
+            
+            # Padroniza para remover espaços internos (transforma "a )" em "a)")
+            num_al = match.group(1).replace(" ", "").strip() if match else "a)"
+            corpo  = texto[match.end():].strip() if match else texto
+            partes = re.split(r'(?<!\w)([a-z]\s*\))\s+', corpo)
+            alineas_para_inserir = [(num_al, partes[0].strip())]
+            for letra, seg in zip(partes[1::2], partes[2::2]):
+                letra_limpa = letra.replace(" ", "").strip()
+                alineas_para_inserir.append((letra_limpa, seg.strip()))
 
-        # Texto livre / preâmbulo → ignora
+            for idx, (num, corp) in enumerate(alineas_para_inserir):
+                ali = make_alinea(numero=num, texto=corp, status=status_dispositivo)
+                if idx == 0:
+                    if refs_no_elem:
+                        ali["referenciais_legislativos"].extend(refs_no_elem)
+                    if mods_no_elem:
+                        ali["modificacoes_historicas"].extend(mods_no_elem)
+                estado.inciso_dict["alineas"].append(ali)
+        continue
+
+        # Preâmbulo → ignora
         if coletando_preambulo:
             continue
 
-        # Se o parágrafo não abriu um novo dispositivo, mas contém links,
-        # anexa os referenciais ao último dispositivo "aberto".
-        if refs_no_elem:
+        # Se o parágrafo não abriu um novo dispositivo, mas contém links, anexa os referenciais ao último dispositivo "aberto".
+        if refs_no_elem or mods_no_elem:
             alvo = estado.inciso_dict or estado.paragrafo_dict or estado.artigo_dict
             if alvo is not None:
-                alvo["referenciais_legislativos"].extend(refs_no_elem)
+                # Se estamos anexando a um dispositivo já aberto, o status do dispositivo tem prioridade para o status das referências.
+                status_alvo = (
+                    alvo.get("status_da_alinea")
+                    or alvo.get("status_do_inciso")
+                    or alvo.get("status_do_paragrafo")
+                    or alvo.get("status_do_artigo")
+                )
+                if refs_no_elem:
+                    alvo["referenciais_legislativos"].extend(
+                        _forcar_status_em_referencias(refs_no_elem, status_alvo)
+                    )
+                if mods_no_elem:
+                    alvo["modificacoes_historicas"].extend(mods_no_elem)
 
     # Fecha o último estado pendente
     titulo_final = estado.fechar_titulo()
