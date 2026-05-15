@@ -20,7 +20,7 @@ Título
 
 import time
 import json
-import uuid
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional, List
@@ -39,7 +39,7 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
 OUTPUT_DIR = Path("output_constituicao")
 OUTPUT_DIR.mkdir(exist_ok=True)
-OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema.json"
+OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema2.json"
 
 # STATUS DA MODIFICAÇÃO
 STATUS_VIGENTE        = "VIGENTE"
@@ -63,8 +63,22 @@ TIPO_REF_OUTRO     = "OUTRO"
 
 
 # GERRAR ID
-def gerar_id():
-    return str(uuid.uuid4())
+def gerar_id(*partes) -> str:
+    """
+    Gera ID determinístico e estável.
+    Mesmo conteúdo => mesmo ID.
+    """
+
+    base = "|".join(
+        str(p).strip().upper()
+        for p in partes
+        if p is not None
+    )
+
+    return hashlib.blake2b(
+        base.encode("utf-8"),
+        digest_size=16
+    ).hexdigest()
 
 
 # MODIFICAÇÕES HISTÓRICAS
@@ -109,7 +123,7 @@ def make_referencial_legislativo(
     }
     """
     return {
-        "id_referencia": gerar_id(),
+        "id_referencia": gerar_id(numero, tipo, texto),
         "numero_referencia": numero,
         "tipo_de_referencia": tipo,
         "texto_da_referencia": texto,
@@ -132,7 +146,7 @@ def make_titulo(
     }
     """
     return{
-        "id_dispositivo_legislativo": gerar_id(),
+        "id_dispositivo_legislativo": gerar_id("TITULO", titulo, descricao),
         "titulo": titulo,
         "descricao_do_titulo": descricao.upper(),
         "capitulos": [],
@@ -155,7 +169,7 @@ def make_capitulo(
     }
     """
     return{
-        "id_dispositivo_legislativo": gerar_id(),
+        "id_dispositivo_legislativo": gerar_id("CAPITULO", capitulo, descricao),
         "capitulo": capitulo,
         "descricao_do_capitulo": descricao.upper(),
         "secoes": [],
@@ -179,7 +193,7 @@ def make_secao(
     }
     """
     return{
-        "id_dispositivo_legislativo": gerar_id(),
+        "id_dispositivo_legislativo": gerar_id("SECAO", secao, descricao),
         "secao": secao,
         "descricao_da_secao": descricao.upper(),
         "subsecoes": [],
@@ -201,7 +215,7 @@ def make_subsecao(
     }
     """
     return{
-        "id_dispositivo_legislativo": gerar_id(),
+        "id_dispositivo_legislativo": gerar_id("SUBSECAO", subsecao, descricao),
         "subsecao": subsecao,
         "descricao_da_subsecao": descricao.upper(),
         "artigos": [],
@@ -227,7 +241,7 @@ def make_artigo(
     }
     """
     return{
-        "id_dispositivo_legislativo": gerar_id(),
+        "id_dispositivo_legislativo": gerar_id("ARTIGO", numero, caput),
         "numero_artigo": numero,
         "caput": caput,
         "status_do_artigo": status,
@@ -257,7 +271,7 @@ def make_paragrafo(
     }
     """
     return{
-        "id_dispositivo_legislativo": gerar_id(),
+        "id_dispositivo_legislativo": gerar_id("PARAGRAFO", numero, texto),
         "numero_paragrafo": numero,
         "texto_do_paragrafo": texto,
         "status_do_paragrafo": status,
@@ -286,7 +300,7 @@ def make_inciso(
     }
     """
     return{
-        "id_dispositivo_legislativo": gerar_id(),
+        "id_dispositivo_legislativo": gerar_id("INCISO", numero, texto),
         "numero_inciso": numero,
         "texto_do_inciso": texto,
         "status_do_inciso": status,
@@ -314,7 +328,7 @@ def make_alinea(
     }
     """
     return{
-        "id_dispositivo_legislativo": gerar_id(),
+        "id_dispositivo_legislativo": gerar_id("ALINEA", numero, texto),
         "numero_alinea": numero,
         "texto_da_alinea": texto,
         "status_da_alinea": status,
