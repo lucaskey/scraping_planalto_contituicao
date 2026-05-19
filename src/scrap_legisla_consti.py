@@ -39,7 +39,7 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
 OUTPUT_DIR = Path("output_constituicao")
 OUTPUT_DIR.mkdir(exist_ok=True)
-OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema2.json"
+OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema.json"
 
 # STATUS DA MODIFICAÇÃO
 STATUS_VIGENTE        = "VIGENTE"
@@ -135,6 +135,7 @@ def make_referencial_legislativo(
 def make_titulo(
     titulo: str = "",
     descricao: str = "",
+    status: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Schema:
@@ -142,14 +143,22 @@ def make_titulo(
         "id_dispositivo_legislativo": "...",
         "titulo": "...",
         "descricao_do_titulo": "...",
-        "capitulos": [...]
+        "status_do_titulo": "VIGENTE | REVOGADO",
+        "referenciais_legislativos": [...],
+        "modificacoes_historicas": [...],
+        "capitulos": [...],
+        "artigos": [...]  
     }
     """
     return{
         "id_dispositivo_legislativo": gerar_id("TITULO", titulo, descricao),
         "titulo": titulo,
         "descricao_do_titulo": descricao.upper(),
+        "status_do_titulo": status,
+        "referenciais_legislativos": [],
+        "modificacoes_historicas": [],
         "capitulos": [],
+        "artigos": [],
     }
 
 
@@ -157,6 +166,7 @@ def make_titulo(
 def make_capitulo(
     capitulo: str = "",
     descricao: str = "",
+    status: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Schema:
@@ -164,6 +174,9 @@ def make_capitulo(
         "id_dispositivo_legislativo": "...",
         "capitulo": "...",
         "descricao_do_capitulo": "...",
+        "status_do_capitulo": "VIGENTE | REVOGADO",
+        "referenciais_legislativos": [...],
+        "modificacoes_historicas": [...],
         "secoes": [...],
         "artigos": [...]
     }
@@ -172,6 +185,9 @@ def make_capitulo(
         "id_dispositivo_legislativo": gerar_id("CAPITULO", capitulo, descricao),
         "capitulo": capitulo,
         "descricao_do_capitulo": descricao.upper(),
+        "status_do_capitulo": status,
+        "referenciais_legislativos": [],
+        "modificacoes_historicas": [],
         "secoes": [],
         "artigos": [],
     }
@@ -181,6 +197,7 @@ def make_capitulo(
 def make_secao(
     secao: str = "",
     descricao: str = "",
+    status: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Schema:
@@ -188,6 +205,9 @@ def make_secao(
         "id_dispositivo_legislativo": "...",
         "secao": "...",
         "descricao_da_secao": "...",
+        "status_da_secao": "VIGENTE | REVOGADO",
+        "referenciais_legislativos": [...],
+        "modificacoes_historicas": [...],
         "subsecoes": [...],
         "artigos": [...]
     }
@@ -196,6 +216,9 @@ def make_secao(
         "id_dispositivo_legislativo": gerar_id("SECAO", secao, descricao),
         "secao": secao,
         "descricao_da_secao": descricao.upper(),
+        "status_da_secao": status,
+        "referenciais_legislativos": [],
+        "modificacoes_historicas": [],
         "subsecoes": [],
         "artigos": [],
     }
@@ -204,6 +227,7 @@ def make_secao(
 def make_subsecao(
     subsecao: str = "",
     descricao: str = "",
+    status: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Schema:
@@ -211,6 +235,9 @@ def make_subsecao(
         "id_dispositivo_legislativo": "...",
         "subsecao": "...",
         "descricao_da_subsecao": "...",
+        "status_da_subsecao": "VIGENTE | REVOGADO",
+        "referenciais_legislativos": [...],
+        "modificacoes_historicas": [...],
         "artigos": [...]
     }
     """
@@ -218,6 +245,9 @@ def make_subsecao(
         "id_dispositivo_legislativo": gerar_id("SUBSECAO", subsecao, descricao),
         "subsecao": subsecao,
         "descricao_da_subsecao": descricao.upper(),
+        "status_da_subsecao": status,
+        "referenciais_legislativos": [],
+        "modificacoes_historicas": [],
         "artigos": [],
     }
 
@@ -755,6 +785,8 @@ class EstadoParser:
 
     def fechar_capitulo(self):
         self.fechar_secao()
+        self.secao_dict = None
+        self.subsecao_dict = None
         if self.capitulo_dict is not None and self.titulo_dict is not None:
             self.capitulo_dict.pop("_direto", None)
             self.titulo_dict["capitulos"].append(self.capitulo_dict)
@@ -796,22 +828,16 @@ class EstadoParser:
         self.fechar_paragrafo()
         if self.artigo_dict is None:
             return
-        destino = self.subsecao_dict or self.secao_dict or self.capitulo_dict or self._capitulo_direto()
+        destino = (
+            self.subsecao_dict 
+            or self.secao_dict 
+            or self.capitulo_dict 
+            or self.titulo_dict
+        )
+        # or self._capitulo_direto()
         if destino is not None:
             destino["artigos"].append(self.artigo_dict)
         self.artigo_dict = None
-
-    def _capitulo_direto(self) -> Optional[Dict]:
-        """Capítulo auxiliar para artigos sem capítulo definido."""
-        if self.titulo_dict is None:
-            return None
-        caps = self.titulo_dict["capitulos"]
-        if caps and caps[0].get("_direto"):
-            return caps[0]
-        cap = make_capitulo(capitulo="", descricao="")
-        cap["_direto"] = True
-        caps.insert(0, cap)
-        return cap
 
 
     # Parágrafo 
@@ -894,24 +920,40 @@ def parsear_constituicao(html: str) -> List[Dict]:
             aguardando_desc_titulo = False
             if estado.titulo_dict is not None:
                 estado.titulo_dict["descricao_do_titulo"] = texto.upper()
+                if refs_no_elem:
+                    estado.titulo_dict["referenciais_legislativos"].extend(refs_no_elem)
+                if mods_no_elem:
+                    estado.titulo_dict["modificacoes_historicas"].extend(mods_no_elem)
             continue
 
         if aguardando_desc_capitulo:
             aguardando_desc_capitulo = False
             if estado.capitulo_dict is not None:
                 estado.capitulo_dict["descricao_do_capitulo"] = texto.upper()
+                if refs_no_elem:
+                    estado.capitulo_dict["referenciais_legislativos"].extend(refs_no_elem)
+                if mods_no_elem:
+                    estado.capitulo_dict["modificacoes_historicas"].extend(mods_no_elem)
             continue
 
         if aguardando_desc_secao:
             aguardando_desc_secao = False
             if estado.secao_dict is not None:
                 estado.secao_dict["descricao_da_secao"] = texto.upper()
+                if refs_no_elem:
+                    estado.secao_dict["referenciais_legislativos"].extend(refs_no_elem)
+                if mods_no_elem:
+                    estado.secao_dict["modificacoes_historicas"].extend(mods_no_elem)
             continue    
 
         if aguardando_desc_subsecao:
             aguardando_desc_subsecao = False
             if estado.subsecao_dict is not None:
                 estado.subsecao_dict["descricao_da_subsecao"] = texto.upper()
+                if refs_no_elem:
+                    estado.subsecao_dict["referenciais_legislativos"].extend(refs_no_elem)
+                if mods_no_elem:
+                    estado.subsecao_dict["modificacoes_historicas"].extend(mods_no_elem)
             continue
 
         # Título
@@ -922,7 +964,11 @@ def parsear_constituicao(html: str) -> List[Dict]:
                 titulos_resultado.append(titulo_fechado)
 
             num, desc = split_num_nome(texto, r'^(TÍTULO\s+[IVXLCDM]+)(.*)')
-            novo_titulo = make_titulo(titulo=num, descricao=desc)
+            novo_titulo = make_titulo(titulo=num, descricao=desc, status=status_dispositivo)
+            if refs_no_elem:
+                novo_titulo["referenciais_legislativos"].extend(refs_no_elem)
+            if mods_no_elem:
+                novo_titulo["modificacoes_historicas"].extend(mods_no_elem)
             estado.abrir_titulo(novo_titulo)
             if not desc.strip():
                 aguardando_desc_titulo = True
@@ -932,7 +978,12 @@ def parsear_constituicao(html: str) -> List[Dict]:
         if detectar_capitulo(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(CAPÍTULO\s+[IVXLCDM]+)(.*)')
-            estado.abrir_capitulo(make_capitulo(capitulo=num, descricao=desc))
+            novo_capitulo = make_capitulo(capitulo=num, descricao=desc, status=status_dispositivo)
+            if refs_no_elem:
+                novo_capitulo["referenciais_legislativos"].extend(refs_no_elem)
+            if mods_no_elem:
+                novo_capitulo["modificacoes_historicas"].extend(mods_no_elem)
+            estado.abrir_capitulo(novo_capitulo)
             if not desc.strip():
                  aguardando_desc_capitulo = True
             continue
@@ -941,7 +992,12 @@ def parsear_constituicao(html: str) -> List[Dict]:
         if detectar_secao(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(SE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)')
-            estado.abrir_secao(make_secao(secao=num, descricao=desc))
+            nova_secao = make_secao(secao=num, descricao=desc, status=status_dispositivo)
+            if refs_no_elem:
+                nova_secao["referenciais_legislativos"].extend(refs_no_elem)
+            if mods_no_elem:
+                nova_secao["modificacoes_historicas"].extend(mods_no_elem)
+            estado.abrir_secao(nova_secao)
             if not desc.strip():
                  aguardando_desc_secao = True
             continue
@@ -950,7 +1006,12 @@ def parsear_constituicao(html: str) -> List[Dict]:
         if detectar_subsecao(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(SUBSE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)')
-            estado.abrir_subsecao(make_subsecao(subsecao=num, descricao=desc))
+            nova_subsecao = make_subsecao(subsecao=num, descricao=desc, status=status_dispositivo)
+            if refs_no_elem:
+                nova_subsecao["referenciais_legislativos"].extend(refs_no_elem)
+            if mods_no_elem:
+                nova_subsecao["modificacoes_historicas"].extend(mods_no_elem)
+            estado.abrir_subsecao(nova_subsecao)
             if not desc.strip():
                  aguardando_desc_subsecao = True
             continue
@@ -984,9 +1045,9 @@ def parsear_constituicao(html: str) -> List[Dict]:
 
         # Inciso
         if detectar_inciso(texto) and estado.artigo_dict:
-            partes = re.split(r'\s*[–\-]\s*', texto, maxsplit=1)
-            num_i  = partes[0].strip()
-            corpo  = partes[1].strip() if len(partes) > 1 else ""
+            matches = re.split(r'\s*[–\-]\s*', texto, maxsplit=1)
+            num_i  = matches[0].strip()
+            corpo  = matches[1].strip() if len(matches) > 1 else ""
             inc = make_inciso(numero=num_i, texto=corpo, status=status_dispositivo)
             if refs_no_elem:
                 inc["referenciais_legislativos"].extend(refs_no_elem)
@@ -1002,9 +1063,9 @@ def parsear_constituicao(html: str) -> List[Dict]:
             # Padroniza para remover espaços internos (transforma "a )" em "a)")
             num_al = match.group(1).replace(" ", "").strip() if match else "a)"
             corpo  = texto[match.end():].strip() if match else texto
-            partes = re.split(r'(?<!\w)([a-z]\s*\))\s+', corpo)
-            alineas_para_inserir = [(num_al, partes[0].strip())]
-            for letra, seg in zip(partes[1::2], partes[2::2]):
+            matches = re.split(r'(?<!\w)([a-z]\s*\))\s+', corpo)
+            alineas_para_inserir = [(num_al, matches[0].strip())]
+            for letra, seg in zip(matches[1::2], matches[2::2]):
                 letra_limpa = letra.replace(" ", "").strip()
                 alineas_para_inserir.append((letra_limpa, seg.strip()))
 
@@ -1016,7 +1077,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
                     if mods_no_elem:
                         ali["modificacoes_historicas"].extend(mods_no_elem)
                 estado.inciso_dict["alineas"].append(ali)
-        continue
+            continue
 
         # Preâmbulo → ignora
         if coletando_preambulo:
@@ -1025,6 +1086,8 @@ def parsear_constituicao(html: str) -> List[Dict]:
         # Se o parágrafo não abriu um novo dispositivo, mas contém links, anexa os referenciais ao último dispositivo "aberto".
         if refs_no_elem or mods_no_elem:
             alvo = estado.inciso_dict or estado.paragrafo_dict or estado.artigo_dict
+            if alvo is None:
+                alvo = estado.subsecao_dict or estado.secao_dict or estado.capitulo_dict or estado.titulo_dict
             if alvo is not None:
                 # Se estamos anexando a um dispositivo já aberto, o status do dispositivo tem prioridade para o status das referências.
                 status_alvo = (
@@ -1032,6 +1095,10 @@ def parsear_constituicao(html: str) -> List[Dict]:
                     or alvo.get("status_do_inciso")
                     or alvo.get("status_do_paragrafo")
                     or alvo.get("status_do_artigo")
+                    or alvo.get("status_da_subsecao")
+                    or alvo.get("status_da_secao")
+                    or alvo.get("status_do_capitulo")
+                    or alvo.get("status_do_titulo")
                 )
                 if refs_no_elem:
                     alvo["referenciais_legislativos"].extend(
