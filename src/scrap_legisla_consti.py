@@ -375,7 +375,7 @@ def detectar_capitulo(t: str) -> bool:
     return bool(re.match(r'^CAPÍTULO\s+[IVXLCDM]+', t.strip().upper()))  
 
 def detectar_secao(t: str) -> bool:    
-    return bool(re.match(r'^SE[CÇ][AÃ]O\s+[IVXLCDM]+', t.strip().upper()))  
+    return bool(re.match(r'^SE[CÇ][AÃ]O\s+[IVXLCDM]+(?:-[A-Z])?', t.strip().upper()))  
 
 def detectar_subsecao(t: str) -> bool:    
     return bool(re.match(r'^SUBSE[CÇ][AÃ]O\s+[IVXLCDM]+', t.strip().upper())) 
@@ -991,7 +991,7 @@ def parsear_constituicao(html: str) -> List[Dict]:
         # Seção
         if detectar_secao(texto):
             coletando_preambulo = False
-            num, desc = split_num_nome(texto, r'^(SE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)')
+            num, desc = split_num_nome(texto, r'^(SE[CÇ][AÃ]O\s+[IVXLCDM]+(?:-[A-Z])?)(.*)')
             nova_secao = make_secao(secao=num, descricao=desc, status=status_dispositivo)
             if refs_no_elem:
                 nova_secao["referenciais_legislativos"].extend(refs_no_elem)
