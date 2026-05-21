@@ -39,7 +39,7 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
 OUTPUT_DIR = Path("output_constituicao")
 OUTPUT_DIR.mkdir(exist_ok=True)
-OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema.json"
+OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema10.json"
 
 # STATUS DA MODIFICAÇÃO
 STATUS_VIGENTE        = "VIGENTE"
@@ -62,7 +62,7 @@ TIPO_REF_ADPF      = "ADPF"
 TIPO_REF_OUTRO     = "OUTRO"
 
 
-# GERRAR ID
+# GERAR ID
 def gerar_id(*partes) -> str:
     """
     Gera ID determinístico e estável.
@@ -415,17 +415,75 @@ def _texto_indica_revogacao(texto: str) -> bool:
     return any(re.search(p, inicio) for p in padroes)
 
 
+def _extrair_desc_vigente_do_elem(elem) -> str:
+    """
+    Extrai a descrição VIGENTE de um elemento que pode conter texto riscado misturado
+    com texto normal (Tipo 2: mesclagem de descrição antiga + nova no mesmo bloco).
+
+    Estratégia:
+    - Remove do DOM todas as tags de strike/risco e todos os <a> (links).
+    - O texto restante é a descrição vigente.
+
+    Retorna string vazia se não sobrar texto útil.
+    """
+    if elem is None:
+        return ""
+
+    import copy
+    copia = copy.copy(elem)
+
+    # Remove tags riscadas
+    for tag in copia.find_all(["strike", "s", "del"]):
+        tag.decompose()
+
+    # Remove tags com style line-through
+    for tag in copia.find_all(True):
+        style = (tag.attrs or {}).get("style", "") or ""
+        if "line-through" in style.lower():
+            tag.decompose()
+
+    # Remove links (não fazem parte da descrição)
+    for tag in copia.find_all("a"):
+        tag.decompose()
+
+    texto = re.sub(r"\s{2,}", " ", copia.get_text(" ", strip=True) or "").strip()
+    return texto
+
+
+def _elem_e_apenas_link_redacao_dada(elem) -> bool:
+    """
+    Retorna True se o elemento contém APENAS (ou quase) um link do tipo
+    'Redação dada pela Emenda Constitucional ...' sem texto livre adicional.
+
+    Isso é usado no Tipo 1 para reconhecer o parágrafo que traz somente o
+    link de redação dada logo após a linha 'Seção V' sem descrição.
+    """
+    if elem is None:
+        return False
+    texto_bruto = re.sub(r"\s{2,}", " ", elem.get_text(" ", strip=True) or "").strip()
+    t_low = texto_bruto.lower()
+    # Só contém link de redação dada / incluída / revogada se o texto começa com esses padrões
+    if re.match(
+        r"^\(?(?:redação\s+dada|incluíd[oa]|revogad[oa])\b",
+        t_low,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
 def _elemento_em_risco(elem) -> bool:
     """
-    Detecta se o texto está visualmente "riscado" no HTML (<strike>)
+    Detecta se o texto está visualmente "riscado" no HTML
+    (<strike>, <s>, <del>, ou style line-through)
     """
     if elem is None:
         return False
 
-    strike_tags = {"strike"}
+    strike_tags = {"strike", "s", "del"}
 
     try:
-        if elem.find(strike_tags):
+        if elem.find(list(strike_tags)):
             return True
     except Exception:
         pass
@@ -445,6 +503,15 @@ def _elemento_em_risco(elem) -> bool:
             return True
         if "text-decoration" in style_l and "through" in style_l:
             return True
+
+    # Check line-through on descendant elements (span, font, etc.)
+    try:
+        for child in elem.find_all(True):
+            style = (child.attrs or {}).get("style", "") or ""
+            if "line-through" in style.lower():
+                return True
+    except Exception:
+        pass
 
     return False
 
@@ -762,6 +829,7 @@ class EstadoParser:
         self.artigo_dict:   Optional[Dict] = None
         self.paragrafo_dict: Optional[Dict] = None
         self.inciso_dict:   Optional[Dict] = None
+        self._desc_antiga_pendente_transfer: Optional[str] = None
 
 
     # Título
@@ -781,6 +849,9 @@ class EstadoParser:
     # Capítulo
     def abrir_capitulo(self, capitulo: Dict):
         self.fechar_capitulo()
+        if self._desc_antiga_pendente_transfer:
+            capitulo["_desc_antiga_pendente"] = self._desc_antiga_pendente_transfer
+            self._desc_antiga_pendente_transfer = None
         self.capitulo_dict = capitulo
 
     def fechar_capitulo(self):
@@ -789,6 +860,15 @@ class EstadoParser:
         self.subsecao_dict = None
         if self.capitulo_dict is not None and self.titulo_dict is not None:
             self.capitulo_dict.pop("_direto", None)
+            desc_antiga = self.capitulo_dict.pop("_desc_antiga_pendente", None)
+            if desc_antiga:
+                found = False
+                for mod in self.capitulo_dict.get("modificacoes_historicas", []):
+                    if not mod.get("texto_antigo_descontinuado"):
+                        mod["texto_antigo_descontinuado"] = desc_antiga
+                        found = True
+                if not found:
+                    self._desc_antiga_pendente_transfer = desc_antiga
             self.titulo_dict["capitulos"].append(self.capitulo_dict)
         self.capitulo_dict = None
     
@@ -796,12 +876,24 @@ class EstadoParser:
     # Seção
     def abrir_secao(self, secao: Dict):
         self.fechar_secao()
+        if self._desc_antiga_pendente_transfer:
+            secao["_desc_antiga_pendente"] = self._desc_antiga_pendente_transfer
+            self._desc_antiga_pendente_transfer = None
         self.secao_dict = secao
 
     def fechar_secao(self):
         self.fechar_subsecao()
         if self.secao_dict is not None and self.capitulo_dict is not None:
             self.secao_dict.pop("_direto", None)
+            desc_antiga = self.secao_dict.pop("_desc_antiga_pendente", None)
+            if desc_antiga:
+                found = False
+                for mod in self.secao_dict.get("modificacoes_historicas", []):
+                    if not mod.get("texto_antigo_descontinuado"):
+                        mod["texto_antigo_descontinuado"] = desc_antiga
+                        found = True
+                if not found:
+                    self._desc_antiga_pendente_transfer = desc_antiga
             self.capitulo_dict["secoes"].append(self.secao_dict)
         self.secao_dict = None
 
@@ -927,24 +1019,90 @@ def parsear_constituicao(html: str) -> List[Dict]:
             continue
 
         if aguardando_desc_capitulo:
-            aguardando_desc_capitulo = False
-            if estado.capitulo_dict is not None:
-                estado.capitulo_dict["descricao_do_capitulo"] = texto.upper()
-                if refs_no_elem:
-                    estado.capitulo_dict["referenciais_legislativos"].extend(refs_no_elem)
-                if mods_no_elem:
-                    estado.capitulo_dict["modificacoes_historicas"].extend(mods_no_elem)
-            continue
+            # ── Tipo 1 — guarda A: próximo elemento é um novo cabeçalho estrutural ──
+            if detectar_titulo(texto) or detectar_capitulo(texto) or detectar_secao(texto):
+                aguardando_desc_capitulo = False
+            # ── Tipo 1 — guarda B: elemento é apenas link de "Redação dada ..." ──
+            elif _elem_e_apenas_link_redacao_dada(elem):
+                if estado.capitulo_dict is not None:
+                    desc_antiga_pend = estado.capitulo_dict.get("_desc_antiga_pendente")
+                    if refs_no_elem:
+                        estado.capitulo_dict["referenciais_legislativos"].extend(refs_no_elem)
+                    if mods_no_elem:
+                        for mod in mods_no_elem:
+                            if desc_antiga_pend and not mod.get("texto_antigo_descontinuado"):
+                                mod["texto_antigo_descontinuado"] = desc_antiga_pend
+                        estado.capitulo_dict["modificacoes_historicas"].extend(mods_no_elem)
+                        if desc_antiga_pend:
+                            estado.capitulo_dict.pop("_desc_antiga_pendente", None)
+                continue
+            elif _elemento_em_risco(elem):
+                if estado.capitulo_dict is not None:
+                    if estado.capitulo_dict["modificacoes_historicas"]:
+                        for mod in estado.capitulo_dict["modificacoes_historicas"]:
+                            if not mod.get("texto_antigo_descontinuado"):
+                                mod["texto_antigo_descontinuado"] = texto
+                    else:
+                        estado.capitulo_dict["_desc_antiga_pendente"] = texto
+                continue
+            else:
+                aguardando_desc_capitulo = False
+                if estado.capitulo_dict is not None:
+                    desc_antiga_pend = estado.capitulo_dict.pop("_desc_antiga_pendente", None)
+                    estado.capitulo_dict["descricao_do_capitulo"] = texto.upper()
+                    if refs_no_elem:
+                        estado.capitulo_dict["referenciais_legislativos"].extend(refs_no_elem)
+                    if mods_no_elem:
+                        for mod in mods_no_elem:
+                            if desc_antiga_pend and not mod.get("texto_antigo_descontinuado"):
+                                mod["texto_antigo_descontinuado"] = desc_antiga_pend
+                        estado.capitulo_dict["modificacoes_historicas"].extend(mods_no_elem)
+                    elif desc_antiga_pend:
+                        estado.capitulo_dict["_desc_antiga_pendente"] = desc_antiga_pend
+                continue
 
         if aguardando_desc_secao:
-            aguardando_desc_secao = False
-            if estado.secao_dict is not None:
-                estado.secao_dict["descricao_da_secao"] = texto.upper()
-                if refs_no_elem:
-                    estado.secao_dict["referenciais_legislativos"].extend(refs_no_elem)
-                if mods_no_elem:
-                    estado.secao_dict["modificacoes_historicas"].extend(mods_no_elem)
-            continue    
+            # ── Tipo 1 — guarda A: próximo elemento é um novo cabeçalho estrutural ──
+            if detectar_titulo(texto) or detectar_capitulo(texto) or detectar_secao(texto):
+                aguardando_desc_secao = False
+            # ── Tipo 1 — guarda B: elemento é apenas link de "Redação dada ..." ──
+            elif _elem_e_apenas_link_redacao_dada(elem):
+                if estado.secao_dict is not None:
+                    desc_antiga_pend = estado.secao_dict.get("_desc_antiga_pendente")
+                    if refs_no_elem:
+                        estado.secao_dict["referenciais_legislativos"].extend(refs_no_elem)
+                    if mods_no_elem:
+                        for mod in mods_no_elem:
+                            if desc_antiga_pend and not mod.get("texto_antigo_descontinuado"):
+                                mod["texto_antigo_descontinuado"] = desc_antiga_pend
+                        estado.secao_dict["modificacoes_historicas"].extend(mods_no_elem)
+                        if desc_antiga_pend:
+                            estado.secao_dict.pop("_desc_antiga_pendente", None)
+                continue
+            elif _elemento_em_risco(elem):
+                if estado.secao_dict is not None:
+                    if estado.secao_dict["modificacoes_historicas"]:
+                        for mod in estado.secao_dict["modificacoes_historicas"]:
+                            if not mod.get("texto_antigo_descontinuado"):
+                                mod["texto_antigo_descontinuado"] = texto
+                    else:
+                        estado.secao_dict["_desc_antiga_pendente"] = texto
+                continue
+            else:
+                aguardando_desc_secao = False
+                if estado.secao_dict is not None:
+                    desc_antiga_pend = estado.secao_dict.pop("_desc_antiga_pendente", None)
+                    estado.secao_dict["descricao_da_secao"] = texto.upper()
+                    if refs_no_elem:
+                        estado.secao_dict["referenciais_legislativos"].extend(refs_no_elem)
+                    if mods_no_elem:
+                        for mod in mods_no_elem:
+                            if desc_antiga_pend and not mod.get("texto_antigo_descontinuado"):
+                                mod["texto_antigo_descontinuado"] = desc_antiga_pend
+                        estado.secao_dict["modificacoes_historicas"].extend(mods_no_elem)
+                    elif desc_antiga_pend:
+                        estado.secao_dict["_desc_antiga_pendente"] = desc_antiga_pend
+                continue
 
         if aguardando_desc_subsecao:
             aguardando_desc_subsecao = False
@@ -978,6 +1136,17 @@ def parsear_constituicao(html: str) -> List[Dict]:
         if detectar_capitulo(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(CAPÍTULO\s+[IVXLCDM]+)(.*)')
+
+            # ── Tipo 2: mesmo elemento tem descrição riscada + descrição vigente ──
+            if elem.find(["strike", "s", "del"]):
+                desc_vigente_raw = _extrair_desc_vigente_do_elem(elem)
+                num_upper = num.strip().upper()
+                if desc_vigente_raw.upper().startswith(num_upper):
+                    desc_vigente_raw = desc_vigente_raw[len(num_upper):].strip()
+                desc_vigente_raw = re.sub(r'^[-–:\s]+', '', desc_vigente_raw)
+                if desc_vigente_raw.strip():
+                    desc = desc_vigente_raw
+
             novo_capitulo = make_capitulo(capitulo=num, descricao=desc, status=status_dispositivo)
             if refs_no_elem:
                 novo_capitulo["referenciais_legislativos"].extend(refs_no_elem)
@@ -992,6 +1161,17 @@ def parsear_constituicao(html: str) -> List[Dict]:
         if detectar_secao(texto):
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(SE[CÇ][AÃ]O\s+[IVXLCDM]+(?:-[A-Z])?)(.*)')
+
+            # ── Tipo 2: mesmo elemento tem descrição riscada + descrição vigente ──
+            if elem.find(["strike", "s", "del"]):
+                desc_vigente_raw = _extrair_desc_vigente_do_elem(elem)
+                num_upper = num.strip().upper()
+                if desc_vigente_raw.upper().startswith(num_upper):
+                    desc_vigente_raw = desc_vigente_raw[len(num_upper):].strip()
+                desc_vigente_raw = re.sub(r'^[-–:\s]+', '', desc_vigente_raw)
+                if desc_vigente_raw.strip():
+                    desc = desc_vigente_raw
+
             nova_secao = make_secao(secao=num, descricao=desc, status=status_dispositivo)
             if refs_no_elem:
                 nova_secao["referenciais_legislativos"].extend(refs_no_elem)
@@ -1105,6 +1285,11 @@ def parsear_constituicao(html: str) -> List[Dict]:
                         _forcar_status_em_referencias(refs_no_elem, status_alvo)
                     )
                 if mods_no_elem:
+                    desc_antiga_pend = alvo.get("_desc_antiga_pendente", None)
+                    if desc_antiga_pend:
+                        for mod in mods_no_elem:
+                            if not mod.get("texto_antigo_descontinuado"):
+                                mod["texto_antigo_descontinuado"] = desc_antiga_pend
                     alvo["modificacoes_historicas"].extend(mods_no_elem)
 
     # Fecha o último estado pendente
