@@ -39,7 +39,7 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
 OUTPUT_DIR = Path("output_constituicao")
 OUTPUT_DIR.mkdir(exist_ok=True)
-OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema10.json"
+OUTPUT_JSON = OUTPUT_DIR / "constituicao_schema.json"
 
 # STATUS DA MODIFICAÇÃO
 STATUS_VIGENTE        = "VIGENTE"
@@ -408,22 +408,16 @@ def _texto_indica_revogacao(texto: str) -> bool:
     inicio = t[:80]
 
     padroes = [
-        r'^\(?revogad[oa]\)?[\.;,\s]',          # "revogada;", "(revogada)"
-        r'^[a-z0-9]+\)\s*\(?revogad[oa]\)?',    # "a) (revogada)"
-        r'^\(?revogad[oa]\)?$',                 # só "(revogada)"
+        r'^\(?revogad[oa]\)?[\.;,\s]',         
+        r'^[a-z0-9]+\)\s*\(?revogad[oa]\)?',    
+        r'^\(?revogad[oa]\)?$',                 
     ]
     return any(re.search(p, inicio) for p in padroes)
 
 
 def _extrair_desc_vigente_do_elem(elem) -> str:
     """
-    Extrai a descrição VIGENTE de um elemento que pode conter texto riscado misturado
-    com texto normal (Tipo 2: mesclagem de descrição antiga + nova no mesmo bloco).
-
-    Estratégia:
-    - Remove do DOM todas as tags de strike/risco e todos os <a> (links).
-    - O texto restante é a descrição vigente.
-
+    Extrai a descrição VIGENTE de um elemento que pode conter texto riscado misturado com texto normal
     Retorna string vazia se não sobrar texto útil.
     """
     if elem is None:
@@ -452,11 +446,8 @@ def _extrair_desc_vigente_do_elem(elem) -> str:
 
 def _elem_e_apenas_link_redacao_dada(elem) -> bool:
     """
-    Retorna True se o elemento contém APENAS (ou quase) um link do tipo
+    Retorna True se o elemento contém APENAS um link do tipo
     'Redação dada pela Emenda Constitucional ...' sem texto livre adicional.
-
-    Isso é usado no Tipo 1 para reconhecer o parágrafo que traz somente o
-    link de redação dada logo após a linha 'Seção V' sem descrição.
     """
     if elem is None:
         return False
@@ -574,7 +565,7 @@ def _tipo_de_referencia(texto: str, href: str) -> str:
     t = (texto or "").lower()
 
     if "stf.jus.br" in h:
-        # STF: inferir pelo texto do link conforme escrito na Constituição.
+        # STF: deduzir pelo texto do link conforme escrito na Constituição.
         if "adpf" in t:
             return TIPO_REF_ADPF
         if "adin" in t:
@@ -964,7 +955,7 @@ class EstadoParser:
 # PARSER PRINCIPAL
 def parsear_constituicao(html: str) -> List[Dict]:
     """
-    Faz o parsing do HTML e retorna lista de títulos
+    Faz o parsing do HTML e retorna lista
     no formato exato do schema estrutura_constituicao.json.
     """
     soup = BeautifulSoup(html, "lxml")
@@ -1019,10 +1010,8 @@ def parsear_constituicao(html: str) -> List[Dict]:
             continue
 
         if aguardando_desc_capitulo:
-            # ── Tipo 1 — guarda A: próximo elemento é um novo cabeçalho estrutural ──
             if detectar_titulo(texto) or detectar_capitulo(texto) or detectar_secao(texto):
                 aguardando_desc_capitulo = False
-            # ── Tipo 1 — guarda B: elemento é apenas link de "Redação dada ..." ──
             elif _elem_e_apenas_link_redacao_dada(elem):
                 if estado.capitulo_dict is not None:
                     desc_antiga_pend = estado.capitulo_dict.get("_desc_antiga_pendente")
@@ -1062,10 +1051,8 @@ def parsear_constituicao(html: str) -> List[Dict]:
                 continue
 
         if aguardando_desc_secao:
-            # ── Tipo 1 — guarda A: próximo elemento é um novo cabeçalho estrutural ──
             if detectar_titulo(texto) or detectar_capitulo(texto) or detectar_secao(texto):
                 aguardando_desc_secao = False
-            # ── Tipo 1 — guarda B: elemento é apenas link de "Redação dada ..." ──
             elif _elem_e_apenas_link_redacao_dada(elem):
                 if estado.secao_dict is not None:
                     desc_antiga_pend = estado.secao_dict.get("_desc_antiga_pendente")
@@ -1137,7 +1124,6 @@ def parsear_constituicao(html: str) -> List[Dict]:
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(CAPÍTULO\s+[IVXLCDM]+)(.*)')
 
-            # ── Tipo 2: mesmo elemento tem descrição riscada + descrição vigente ──
             if elem.find(["strike", "s", "del"]):
                 desc_vigente_raw = _extrair_desc_vigente_do_elem(elem)
                 num_upper = num.strip().upper()
@@ -1162,7 +1148,6 @@ def parsear_constituicao(html: str) -> List[Dict]:
             coletando_preambulo = False
             num, desc = split_num_nome(texto, r'^(SE[CÇ][AÃ]O\s+[IVXLCDM]+(?:-[A-Z])?)(.*)')
 
-            # ── Tipo 2: mesmo elemento tem descrição riscada + descrição vigente ──
             if elem.find(["strike", "s", "del"]):
                 desc_vigente_raw = _extrair_desc_vigente_do_elem(elem)
                 num_upper = num.strip().upper()
