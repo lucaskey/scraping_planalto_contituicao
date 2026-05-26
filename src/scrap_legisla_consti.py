@@ -34,6 +34,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from bs4 import BeautifulSoup
+from constituicao_utils import split_num_nome as shared_split_num_nome
 
 
 BASE_URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
@@ -393,13 +394,7 @@ def detectar_alinea(t: str) -> bool:
     return bool(re.match(r'^\s*([a-z]\s*\))\s*', t.strip()))
 
 def split_num_nome(t: str, pattern: str) -> tuple[str, str]:
-    match = re.match(pattern, t.strip(), re.IGNORECASE)
-    if match:
-        num = match.group(1).strip()
-        nome = t.strip()[len(match.group(0)):].strip()
-        nome = re.sub(r'^[-–:\s]+', '', nome)
-        return num, nome
-    return t.strip(), ""
+    return shared_split_num_nome(t, pattern)
 
 
 def _texto_indica_revogacao(texto: str) -> bool:

@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from constituicao_utils import dump_json, get_logger, normalize_whitespace, split_num_nome
 from scrap_legisla_consti import (
     EstadoParser,
     detectar_alinea,
@@ -28,7 +29,6 @@ from scrap_legisla_consti import (
     make_secao,
     make_subsecao,
     make_titulo,
-    split_num_nome,
 )
 
 
@@ -36,6 +36,7 @@ BASE_URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
 OUTPUT_DIR = Path("output_constituicao")
 OUTPUT_DIR.mkdir(exist_ok=True)
 OUTPUT_JSON = OUTPUT_DIR / "dados_links.json"
+LOGGER = get_logger(__name__)
 
 
 DEFAULT_HEADERS = {
@@ -59,8 +60,7 @@ class LinkInfo:
 
 
 def _normalizar_texto(s: str) -> str:
-    s = re.sub(r"[\r\n\t]+", " ", s or "").strip()
-    s = re.sub(r"\s{2,}", " ", s)
+    s = normalize_whitespace(s)
     s = re.sub(r"(\d)\ufffd\b", r"\1º", s)
     return s
 
@@ -90,7 +90,7 @@ def baixar_html(url: str, timeout_s: int = 45) -> str:
             return resp.text
         except Exception as e:
             last_err = e
-            print(f"Tentativa {attempt} falhou: {e} - {url}")
+            LOGGER.warning("Tentativa %s falhou: %s - %s", attempt, e, url)
             if attempt >= 5:
                 break
             time.sleep(min(2**attempt, 20))
@@ -145,7 +145,7 @@ def _elementos_textuais(soup: BeautifulSoup) -> list[str]:
         tag.decompose()
     body = soup.find("body")
     if not body:
-        print("[!] Body não encontrado.")
+        LOGGER.warning("Body nao encontrado.")
         return []
 
     elems = body.find_all(["p", "h1", "h2", "h3", "h4", "h5", "li"])
@@ -360,9 +360,9 @@ def scrap_link_planalto(url: str) -> dict[str, Any]:
 
 
 def main() -> None:
-    print(f"[+] Coletando links da Constituição: {BASE_URL}", flush=True)
+    LOGGER.info("[+] Coletando links da Constituicao: %s", BASE_URL)
     links = extrair_links_constituicao(BASE_URL)
-    print(f"[+] Links encontrados: {len(links)}", flush=True)
+    LOGGER.info("[+] Links encontrados: %s", len(links))
 
     # resume/cache: se já existe arquivo anterior, reaproveita e só completa o que falta
     existentes_por_url: dict[str, dict[str, Any]] = {}
@@ -407,10 +407,10 @@ def main() -> None:
                     item["sucesso"] = False
                     item.pop("erro", None)
                 else:
-                    print(f"[{idx}/{total}] (cache) {link.url}", flush=True)
+                    LOGGER.info("[%s/%s] (cache) %s", idx, total, link.url)
             else:
                 try:
-                    print(f"[{idx}/{total}] (scrap) {link.url}", flush=True)
+                    LOGGER.info("[%s/%s] (scrap) %s", idx, total, link.url)
                     item["dados"] = scrap_link_planalto(link.url)
                     item["sucesso"] = True
                 except Exception as e:
@@ -420,15 +420,13 @@ def main() -> None:
 
         # grava incrementalmente (para execuções longas)
         try:
-            with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-                json.dump(saida, f, ensure_ascii=False, indent=2)
+            dump_json(saida, OUTPUT_JSON)
         except Exception:
             pass
 
-    with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(saida, f, ensure_ascii=False, indent=2)
+    dump_json(saida, OUTPUT_JSON)
 
-    print(f"[+] Salvo em: {OUTPUT_JSON.resolve()}")
+    LOGGER.info("[+] Salvo em: %s", OUTPUT_JSON.resolve())
 
 
 if __name__ == "__main__":
