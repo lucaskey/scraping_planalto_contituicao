@@ -28,7 +28,7 @@ def normalize_whitespace(text: str) -> str:
 
 def sanitize_text_for_json(text: str) -> str:
     sanitized = (text or "").replace('"', "")
-    return sanitized.replace("â€œ", "").replace("â€", "")
+    return sanitized.replace("“", "").replace("”", "")
 
 
 def split_num_nome(text: str, pattern: str) -> tuple[str, str]:
@@ -38,10 +38,12 @@ def split_num_nome(text: str, pattern: str) -> tuple[str, str]:
 
     numero = match.group(1).strip()
     descricao = text.strip()[len(match.group(0)) :].strip()
-    descricao = re.sub(r"^[-â€“:\s]+", "", descricao)
+    descricao = re.sub(r"^[-–:\s]+", "", descricao)
     return numero, descricao
 
 
 def dump_json(data: Any, path: Path) -> None:
-    with open(path, "w", encoding="utf-8") as file:
+    normalized = Path(str(path).strip().strip('"'))
+    normalized.parent.mkdir(parents=True, exist_ok=True)
+    with open(normalized, "w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=2)

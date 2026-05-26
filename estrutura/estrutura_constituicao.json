@@ -1,0 +1,123 @@
+{
+  "id_dispositivo_legislativo": "...",
+  "titulo": "...",
+  "descricao_do_titulo": "...",
+  "capitulos": [
+    {
+      "id_dispositivo_legislativo": "...",
+      "capitulo": "...",
+      "descricao_capitulo": "...",
+      "secoes": [
+        {
+          "id_dispositivo_legislativo": "...",
+          "secao": "...",
+          "descricao_secao": "...",
+          "subsecoes": [
+            {
+              "id_dispositivo_legislativo": "...",
+              "subsecao": "...",
+              "descricao_subsecao": "..."
+            }
+          ],
+          "artigos": [
+            {
+              "id_dispositivo_legislativo": "...",
+              "numero_artigo": "...",
+              "caput": "...",
+              "status_do_artigo": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA",
+              "referenciais_legislativos": [
+                {
+                  "id_referencia": "...",
+                  "numero_referencia": "...",
+                  "tipo_de_referencia": "...",
+                  "texto_da_referencia": "...",
+                  "status_da_referencia": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA"
+                }
+              ],
+              "modificacoes_historicas": [
+                {
+                  "tipo_de_modificacao": "INCLUSAO OU ALTERACAO OU REVOGACAO OU ADICAO",
+                  "descricao_da_modificacao": "...",
+                  "texto_antigo_descontinuado": "...",
+                  "status_da_modificacao": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA"
+                }
+              ],
+              "paragrafos": [
+                {
+                  "id_dispositivo_legislativo": "...",
+                  "numero_paragrafo": "...",
+                  "texto_do_paragrafo": "...",
+                  "status_do_paragrafo": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA",
+                  "referenciais_legislativos": [
+                    {
+                      "id_referencia": "...",
+                      "numero_referencia": "...",
+                      "tipo_de_referencia": "LEI OU DECRETO OU RESOLUCAO OU OUTRO",
+                      "status_da_referencia": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA"
+                    }
+                  ],
+                  "modificacoes_historicas": [
+                    {
+                      "tipo_de_modificacao": "INCLUSAO OU ALTERACAO OU REVOGACAO OU ADICAO",
+                      "descricao_da_modificacao": "...",
+                      "texto_antigo_descontinuado": "...",
+                      "status_da_modificacao": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA"
+                    }
+                  ],
+                  "incisos": [
+                    {
+                      "id_dispositivo_legislativo": "...",
+                      "numero_inciso": "...",
+                      "texto_do_inciso": "...",
+                      "status_do_inciso": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA",
+                      "referenciais_legislativos": [
+                        {
+                          "id_referencia": "...",
+                          "numero_referencia": "...",
+                          "tipo_de_referencia": "LEI OU DECRETO OU RESOLUCAO OU OUTRO",
+                          "status_da_referencia": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA"
+                        }
+                      ],
+                      "modificacoes_historicas": [
+                        {
+                          "tipo_de_modificacao": "INCLUSAO OU ALTERACAO OU REVOGACAO OU ADICAO",
+                          "descricao_da_modificacao": "...",
+                          "texto_antigo_descontinuado": "...",
+                          "status_da_modificacao": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA"
+                        }
+                      ],
+                      "alineas": [
+                        {
+                          "id_dispositivo_legislativo": "...",
+                          "numero_alinea": "...",
+                          "texto_da_alinea": "...",
+                          "status_da_alinea": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA",
+                          "refereiais_legislativos": [
+                            {
+                              "id_referencia": "...",
+                              "numero_referencia": "...",
+                              "tipo_de_referencia": "LEI OU DECRETO OU RESOLUCAO OU OUTRO",
+                              "status_da_referencia": "bool (true ou false)"
+                            }
+                          ],
+                          "modificacoes_historicas": [
+                            {
+                              "tipo_de_modificacao": "INCLUSAO OU ALTERACAO OU REVOGACAO OU ADICAO",
+                              "descricao_da_modificacao": "...",
+                              "texto_antigo_descontinuado": "...",
+                              "status_da_modificacao": "VIGENTE OU REVOGADO OU SUSPENSO OU REDACAO_ANTIGA"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}   

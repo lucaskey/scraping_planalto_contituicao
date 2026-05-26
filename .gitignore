@@ -1,0 +1,10 @@
+﻿venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.mypy_cache/
+.pytest_cache/
+
+output_constituicao/

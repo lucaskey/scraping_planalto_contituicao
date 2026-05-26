@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -10,17 +10,9 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from constituicao_utils import dump_json, get_logger, normalize_whitespace, split_num_nome
-from scrap_legisla_consti import (
+from utils.constituicao_utils import dump_json, get_logger, normalize_whitespace, split_num_nome
+from parsers.schema import (
     EstadoParser,
-    detectar_alinea,
-    detectar_artigo,
-    detectar_capitulo,
-    detectar_inciso,
-    detectar_paragrafo,
-    detectar_secao,
-    detectar_subsecao,
-    detectar_titulo,
     make_alinea,
     make_artigo,
     make_capitulo,
@@ -30,12 +22,23 @@ from scrap_legisla_consti import (
     make_subsecao,
     make_titulo,
 )
+from parsers.detectores import (
+    detectar_titulo,
+    detectar_capitulo,
+    detectar_secao,
+    detectar_subsecao,
+    detectar_artigo,
+    detectar_paragrafo,
+    detectar_inciso,
+    detectar_alinea,
+)
+from services.links_service import LinksPipelineDeps, LinksService
 
 
 BASE_URL = "https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm"
 OUTPUT_DIR = Path("output_constituicao")
 OUTPUT_DIR.mkdir(exist_ok=True)
-OUTPUT_JSON = OUTPUT_DIR / "dados_links.json"
+OUTPUT_JSON = OUTPUT_DIR / "dado_links.json"
 LOGGER = get_logger(__name__)
 
 
@@ -61,14 +64,15 @@ class LinkInfo:
 
 def _normalizar_texto(s: str) -> str:
     s = normalize_whitespace(s)
-    s = re.sub(r"(\d)\ufffd\b", r"\1º", s)
+    s = re.sub(r"(\d)\ufffd\b", r"\1Âº", s)
     return s
 
 
 def _is_planaltoccivil(url: str) -> bool:
     try:
         p = urlparse(url)
-    except Exception:
+    except Exception as exc:
+        LOGGER.debug("Falha ao parsear URL '%s': %s", url, exc)
         return False
     if p.scheme not in {"http", "https"}:
         return False
@@ -101,8 +105,9 @@ def baixar_html(url: str, timeout_s: int = 45) -> str:
 def extrair_links_constituicao(url: str = BASE_URL) -> list[LinkInfo]:
     try:
         html = baixar_html(url)
-    except Exception:
-        # fallback: reaproveita o arquivo já existente (útil se o Planalto estiver com 503/429)
+    except Exception as exc:
+        LOGGER.warning("Falha ao baixar HTML principal (%s): %s", url, exc)
+        # fallback: reaproveita o arquivo jÃ¡ existente (Ãºtil se o Planalto estiver com 503/429)
         if OUTPUT_JSON.exists():
             try:
                 with open(OUTPUT_JSON, "r", encoding="utf-8") as f:
@@ -117,8 +122,8 @@ def extrair_links_constituicao(url: str = BASE_URL) -> list[LinkInfo]:
                             out.append(LinkInfo(texto=_normalizar_texto(str(it.get("texto", ""))), url=u))
                     if out:
                         return out
-            except Exception:
-                pass
+            except Exception as fallback_exc:
+                LOGGER.warning("Falha ao ler fallback em %s: %s", OUTPUT_JSON, fallback_exc)
         raise
     soup = BeautifulSoup(html, "html.parser")
     links: list[LinkInfo] = []
@@ -160,8 +165,8 @@ def _elementos_textuais(soup: BeautifulSoup) -> list[str]:
 
 def _parsear_documento_planalto(html: str) -> list[dict[str, Any]]:
     """
-    Parser estruturado (Planato/ccivil_03) para gerar uma árvore parecida com a da Constituição:
-    Título -> Capítulo -> Seção -> Subseção -> Artigo -> Parágrafo -> Inciso -> Alínea.
+    Parser estruturado (Planato/ccivil_03) para gerar uma Ã¡rvore parecida com a da ConstituiÃ§Ã£o:
+    TÃ­tulo -> CapÃ­tulo -> SeÃ§Ã£o -> SubseÃ§Ã£o -> Artigo -> ParÃ¡grafo -> Inciso -> AlÃ­nea.
     """
     soup = BeautifulSoup(html, "lxml")
     textos = _elementos_textuais(soup)
@@ -198,22 +203,22 @@ def _parsear_documento_planalto(html: str) -> list[dict[str, Any]]:
                 estado.subsecao_dict["descricao_da_subsecao"] = texto.upper()
             continue
 
-        # Título
+        # TÃ­tulo
         if detectar_titulo(texto):
             titulo_fechado = estado.fechar_titulo()
             if titulo_fechado:
                 titulos.append(titulo_fechado)
 
-            num, desc = split_num_nome(texto, r"^(TÍTULO\s+[IVXLCDM]+)(.*)")
+            num, desc = split_num_nome(texto, r"^(TÃTULO\s+[IVXLCDM]+)(.*)")
             novo_titulo = make_titulo(titulo=num, descricao=desc)
             estado.abrir_titulo(novo_titulo)
             if not desc.strip():
                 aguardando_desc_titulo = True
             continue
 
-        # Capítulo
+        # CapÃ­tulo
         if detectar_capitulo(texto):
-            num, desc = split_num_nome(texto, r"^(CAPÍTULO\s+[IVXLCDM]+)(.*)")
+            num, desc = split_num_nome(texto, r"^(CAPÃTULO\s+[IVXLCDM]+)(.*)")
             if estado.titulo_dict is None:
                 estado.abrir_titulo(make_titulo(titulo="", descricao=""))
             estado.abrir_capitulo(make_capitulo(capitulo=num, descricao=desc))
@@ -221,9 +226,9 @@ def _parsear_documento_planalto(html: str) -> list[dict[str, Any]]:
                 aguardando_desc_capitulo = True
             continue
 
-        # Seção
+        # SeÃ§Ã£o
         if detectar_secao(texto):
-            num, desc = split_num_nome(texto, r"^(SE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)")
+            num, desc = split_num_nome(texto, r"^(SE[CÃ‡][AÃƒ]O\s+[IVXLCDM]+)(.*)")
             if estado.capitulo_dict is None:
                 if estado.titulo_dict is None:
                     estado.abrir_titulo(make_titulo(titulo="", descricao=""))
@@ -233,9 +238,9 @@ def _parsear_documento_planalto(html: str) -> list[dict[str, Any]]:
                 aguardando_desc_secao = True
             continue
 
-        # Subseção
+        # SubseÃ§Ã£o
         if detectar_subsecao(texto):
-            num, desc = split_num_nome(texto, r"^(SUBSE[CÇ][AÃ]O\s+[IVXLCDM]+)(.*)")
+            num, desc = split_num_nome(texto, r"^(SUBSE[CÃ‡][AÃƒ]O\s+[IVXLCDM]+)(.*)")
             if estado.secao_dict is None:
                 if estado.capitulo_dict is None:
                     if estado.titulo_dict is None:
@@ -251,33 +256,33 @@ def _parsear_documento_planalto(html: str) -> list[dict[str, Any]]:
         if detectar_artigo(texto):
             if estado.titulo_dict is None:
                 estado.abrir_titulo(make_titulo(titulo="", descricao=""))
-            match = re.match(r"^(Art\.\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*)", texto, re.IGNORECASE)
+            match = re.match(r"^(Art\.\s*\d+[ÂºoÂ°]?(?:[â€“\-][A-Z])?\s*\.?\s*)", texto, re.IGNORECASE)
             num_a = match.group(1).strip() if match else texto[:25]
             caput = texto[len(num_a) :].strip() if match else texto
             estado.abrir_artigo(make_artigo(numero=num_a, caput=caput))
             continue
 
-        # Parágrafo
+        # ParÃ¡grafo
         if detectar_paragrafo(texto) and estado.artigo_dict:
             match = re.match(
-                r"^(§\s*\d+[ºo°]?(?:[–\-][A-Z])?\s*\.?\s*[-–]?\s*|Parágrafo\s+único\.?\s*[-–]?\s*)",
+                r"^(Â§\s*\d+[ÂºoÂ°]?(?:[â€“\-][A-Z])?\s*\.?\s*[-â€“]?\s*|ParÃ¡grafo\s+Ãºnico\.?\s*[-â€“]?\s*)",
                 texto,
                 re.IGNORECASE,
             )
-            num_p = match.group(1).strip() if match else "§"
+            num_p = match.group(1).strip() if match else "Â§"
             corpo = texto[len(num_p) :].strip() if match else texto
             estado.abrir_paragrafo(make_paragrafo(numero=num_p, texto=corpo))
             continue
 
         # Inciso
         if detectar_inciso(texto) and estado.artigo_dict:
-            partes = re.split(r"\s*[–\-]\s*", texto, maxsplit=1)
+            partes = re.split(r"\s*[â€“\-]\s*", texto, maxsplit=1)
             num_i = partes[0].strip()
             corpo = partes[1].strip() if len(partes) > 1 else ""
             estado.abrir_inciso(make_inciso(numero=num_i, texto=corpo))
             continue
 
-        # Alínea
+        # AlÃ­nea
         if detectar_alinea(texto) and estado.inciso_dict:
             match = re.match(r"^([a-z]\))\s*", texto, re.IGNORECASE)
             num_al = (match.group(1) or "").strip() if match else "a)"
@@ -299,8 +304,8 @@ def _parsear_documento_planalto(html: str) -> list[dict[str, Any]]:
 
 def _filtrar_por_fragmento(titulos: list[dict[str, Any]], fragment: str) -> list[dict[str, Any]]:
     """
-    Se a URL tem fragmento tipo #art1, tenta reduzir a saída para o(s) artigo(s) relevantes.
-    Se não conseguir inferir, retorna tudo.
+    Se a URL tem fragmento tipo #art1, tenta reduzir a saÃ­da para o(s) artigo(s) relevantes.
+    Se nÃ£o conseguir inferir, retorna tudo.
     """
     frag = (fragment or "").strip().lstrip("#")
     if not frag:
@@ -361,74 +366,29 @@ def scrap_link_planalto(url: str) -> dict[str, Any]:
 
 def main() -> None:
     LOGGER.info("[+] Coletando links da Constituicao: %s", BASE_URL)
-    links = extrair_links_constituicao(BASE_URL)
-    LOGGER.info("[+] Links encontrados: %s", len(links))
-
-    # resume/cache: se já existe arquivo anterior, reaproveita e só completa o que falta
-    existentes_por_url: dict[str, dict[str, Any]] = {}
-    if OUTPUT_JSON.exists():
-        try:
-            with open(OUTPUT_JSON, "r", encoding="utf-8") as f:
-                existentes = json.load(f)
-            if isinstance(existentes, list):
-                for it in existentes:
-                    if isinstance(it, dict) and isinstance(it.get("url"), str):
-                        existentes_por_url[it["url"]] = it
-        except Exception:
-            existentes_por_url = {}
-
-    saida: list[dict[str, Any]] = []
-    total = len(links)
 
     def precisa_rescrap(item_existente: dict[str, Any]) -> bool:
         try:
             blob = json.dumps(item_existente.get("dados"), ensure_ascii=False)
-        except Exception:
+        except Exception as exc:
+            LOGGER.debug("Falha ao serializar item para checagem de rescrape: %s", exc)
             return True
-        return ("\ufffd" in blob) or ("ยบ" in blob)
+        return ("\ufffd" in blob) or ("à¸¢à¸š" in blob)
 
-    for idx, link in enumerate(links, start=1):
-        item: dict[str, Any] = {
-            "texto": link.texto,
-            "url": link.url,
-            "tipo": "planalto_ccivil" if _is_planaltoccivil(link.url) else "externo",
-        }
+    deps = LinksPipelineDeps(
+        extract_links=lambda: extrair_links_constituicao(BASE_URL),
+        is_planalto_ccivil=_is_planaltoccivil,
+        scrape_link=scrap_link_planalto,
+        should_rescrape=precisa_rescrap,
+    )
+    service = LinksService(OUTPUT_JSON, deps)
+    saida = service.run()
 
-        anterior = existentes_por_url.get(link.url)
-        if isinstance(anterior, dict):
-            # preserva o que já foi coletado; atualiza texto/tipo se mudarem
-            item.update(anterior)
-            item["texto"] = link.texto
-            item["tipo"] = "planalto_ccivil" if _is_planaltoccivil(link.url) else "externo"
-
-        if _is_planaltoccivil(link.url):
-            if item.get("sucesso") is True and isinstance(item.get("dados"), dict):
-                if precisa_rescrap(item):
-                    item["sucesso"] = False
-                    item.pop("erro", None)
-                else:
-                    LOGGER.info("[%s/%s] (cache) %s", idx, total, link.url)
-            else:
-                try:
-                    LOGGER.info("[%s/%s] (scrap) %s", idx, total, link.url)
-                    item["dados"] = scrap_link_planalto(link.url)
-                    item["sucesso"] = True
-                except Exception as e:
-                    item["sucesso"] = False
-                    item["erro"] = str(e)
-        saida.append(item)
-
-        # grava incrementalmente (para execuções longas)
-        try:
-            dump_json(saida, OUTPUT_JSON)
-        except Exception:
-            pass
-
-    dump_json(saida, OUTPUT_JSON)
-
+    LOGGER.info("[+] Links processados: %s", len(saida))
     LOGGER.info("[+] Salvo em: %s", OUTPUT_JSON.resolve())
 
 
 if __name__ == "__main__":
     main()
+
 
